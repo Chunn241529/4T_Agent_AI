@@ -2,9 +2,10 @@
 # -*- coding: utf-8 -*-
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTextEdit, QFrame,
-    QScrollArea, QTextBrowser, QPushButton, QHBoxLayout
+    QScrollArea, QTextBrowser, QPushButton, QHBoxLayout, QLabel
 )
 from PySide6.QtCore import Qt, QPoint
+from PySide6.QtGui import QPixmap
 
 class UIComponents:
     def __init__(self, parent):
@@ -17,6 +18,10 @@ class UIComponents:
         self.response_display = None
         self.button_widget = None
         self.screenshot_button = None
+        self.preview_widget = None
+        self.icon_label = None
+        self.name_label = None
+        self.size_label = None
 
     def setup_ui(self):
         self.parent.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -27,7 +32,6 @@ class UIComponents:
         self.parent.layout = QVBoxLayout(self.parent)
         self.parent.layout.setContentsMargins(0, 0, 0, 0)
         
-        # Tạo main container để chứa toàn bộ nội dung trừ button
         self.main_container = QWidget()
         self.main_container.setObjectName("mainContainer")
         self.container_layout = QVBoxLayout(self.main_container)
@@ -39,12 +43,37 @@ class UIComponents:
         frame_layout = QVBoxLayout(self.main_frame)
         frame_layout.setSpacing(10)
         
-        # Input box
+        self.preview_widget = QWidget(self.main_frame)
+        self.preview_widget.setObjectName("previewWidget")
+        preview_layout = QHBoxLayout(self.preview_widget)
+        preview_layout.setContentsMargins(10, 5, 10, 5)
+        preview_layout.setSpacing(10)
+        
+        self.icon_label = QLabel()
+        self.icon_label.setFixedSize(40, 40)
+        self.icon_label.setScaledContents(True)
+        preview_layout.addWidget(self.icon_label)
+        
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(2)
+        self.name_label = QLabel("Screenshot.png")
+        self.name_label.setStyleSheet("color: #e0e0e0; font-size: 12px;")
+        self.size_label = QLabel("0x0")
+        self.size_label.setStyleSheet("color: #a0a0a0; font-size: 10px;")
+        info_layout.addWidget(self.name_label)
+        info_layout.addWidget(self.size_label)
+        preview_layout.addLayout(info_layout)
+        
+        preview_layout.addStretch()
+        frame_layout.addWidget(self.preview_widget)
+        self.preview_widget.hide()
+        
         self.input_box = QTextEdit(self.main_frame)
         self.input_box.setObjectName("inputBox")
         self.input_box.setPlaceholderText("Hỏi 4T...")
-        self.input_box.setFixedHeight(80) 
+        self.input_box.setFixedHeight(80)
         self.input_box.keyPressEvent = self.parent.handle_key_press
+        self.input_box.setAcceptRichText(True)
 
         self.scroll_area = QScrollArea(self.main_frame)
         self.scroll_area.setWidgetResizable(True)
@@ -62,12 +91,10 @@ class UIComponents:
         
         self.container_layout.addWidget(self.main_frame)
         
-        # Tạo widget riêng cho button
         self.button_widget = QWidget()
         button_layout = QHBoxLayout(self.button_widget)
-        button_layout.setContentsMargins(5, 0, 0, 0)  # Margin để button không dính sát viền
+        button_layout.setContentsMargins(5, 0, 0, 0)
         
-        # Tạo nút chụp hình
         self.screenshot_button = QPushButton("📷", self.parent)
         self.screenshot_button.setObjectName("screenshotButton")
         self.screenshot_button.setFixedSize(60, 30)
@@ -77,83 +104,13 @@ class UIComponents:
         button_layout.addWidget(self.screenshot_button)
         button_layout.addStretch()
         
-        # Thêm các widget vào layout chính
         self.parent.layout.addWidget(self.main_container)
         self.parent.layout.addWidget(self.button_widget)
         
-        # Không ẩn scroll_area ở đây, để spinner_logic quản lý
-        print("scroll_area initialized, not hidden")  # Debug log
+        print("scroll_area initialized, not hidden")
         self.apply_stylesheet()
         self.parent.adjustSize()
-        print(f"Initial window size: {self.parent.size().width()}x{self.parent.size().height()}")  # Debug log
-
-    def focus_in_event(self, event):
-        self.parent._is_stable = True
-        self.parent.focusInEvent(event)
-
-    def show_event(self, event):
-        self.parent._is_stable = False
-        self.parent.showEvent(event)
-        self.input_box.setFocus()
-
-    def focus_out_event(self, event):
-        if self.parent._is_stable:
-            self.parent.hide()
-        self.parent.focusOutEvent(event)
-
-    def mouse_press_event(self, event):
-        if event.button() == Qt.RightButton:
-            self.parent.dragging = True
-            self.parent.drag_position = event.globalPosition().toPoint() - self.parent.pos()
-            event.accept()
-
-    def mouse_move_event(self, event):
-        if self.parent.dragging and event.buttons() & Qt.RightButton:
-            self.parent.move(event.globalPosition().toPoint() - self.parent.drag_position)
-            event.accept()
-
-    def mouse_release_event(self, event):
-        if event.button() == Qt.RightButton:
-            self.parent.dragging = False
-            event.accept()
-
-    def adjust_window_height(self):
-        if not self.scroll_area.isVisible(): 
-            # Chỉ hiển thị input box và button
-            input_height = self.input_box.height()
-            button_height = self.button_widget.sizeHint().height()
-            margins = self.main_frame.layout().contentsMargins()
-            total_margin = margins.top() + margins.bottom()
-            spacing = self.main_frame.layout().spacing()
-            
-            target_height = input_height + button_height + total_margin + spacing
-            self.parent.setFixedHeight(target_height)
-            return
-        
-        doc_height = self.response_display.document().size().toSize().height()
-        input_height = self.input_box.height()
-        button_height = self.button_widget.sizeHint().height()
-        
-        # Tính toán margins từ container layout
-        container_margins = self.container_layout.contentsMargins()
-        container_margin = container_margins.top() + container_margins.bottom()
-        
-        # Tính toán margins từ main frame layout
-        frame_margins = self.main_frame.layout().contentsMargins()
-        frame_margin = frame_margins.top() + frame_margins.bottom()
-        
-        spacing = self.main_frame.layout().spacing()
-        
-        # Thêm padding cho response area (tăng thêm 20px)
-        response_padding = 20
-        
-        target_height = input_height + doc_height + button_height + container_margin + frame_margin + spacing + response_padding
-
-        final_height = min(target_height, self.parent.MAX_HEIGHT)
-        
-        if self.parent.height() != final_height:
-            self.parent.setFixedHeight(final_height)
-
+        print(f"Initial window size: {self.parent.size().width()}x{self.parent.size().height()}")
 
     def apply_stylesheet(self):
         self.parent.setStyleSheet("""
@@ -164,6 +121,15 @@ class UIComponents:
                 background-color: rgba(28, 29, 35, 0.95); 
                 border: 1px solid #505050; 
                 border-radius: 20px; 
+            }
+            #previewWidget {
+                background-color: rgba(28, 29, 35, 0.95);
+                border: 1px solid #505050;
+                border-radius: 9px;
+            }
+            #previewWidget:hover {
+                background-color: #3a3b45;
+                border: 1px solid #61afef;
             }
             #inputBox { 
                 background-color: #2c2d35; 
@@ -268,3 +234,43 @@ class UIComponents:
                 width: 0px; 
             }
         """)
+
+    def mouse_press_event(self, event):
+        if event.button() == Qt.RightButton:
+            self.parent.dragging = True
+            self.parent.drag_position = event.globalPosition().toPoint() - self.parent.pos()
+            event.accept()
+
+    def mouse_move_event(self, event):
+        if self.parent.dragging and event.buttons() & Qt.RightButton:
+            self.parent.move(event.globalPosition().toPoint() - self.parent.drag_position)
+            event.accept()
+
+    def mouse_release_event(self, event):
+        if event.button() == Qt.RightButton:
+            self.parent.dragging = False
+            event.accept()
+    
+    def adjust_window_height(self):
+        doc_height = self.response_display.document().size().toSize().height()
+        input_height = self.input_box.height()
+        preview_height = self.preview_widget.sizeHint().height() if self.preview_widget.isVisible() else 0
+        button_height = self.button_widget.sizeHint().height()
+        
+        container_margins = self.container_layout.contentsMargins()
+        container_margin = container_margins.top() + container_margins.bottom()
+        
+        frame_margins = self.main_frame.layout().contentsMargins()
+        frame_margin = frame_margins.top() + frame_margins.bottom()
+        
+        spacing = self.main_frame.layout().spacing()
+        
+        response_padding = 20
+        
+        target_height = input_height + doc_height + preview_height + button_height + container_margin + frame_margin + spacing * 2 + response_padding
+
+        final_height = min(target_height, self.parent.MAX_HEIGHT)
+        
+        if self.parent.height() != final_height:
+            self.parent.setFixedHeight(final_height)
+            print(f"Adjusted window height to: {final_height}, preview_height: {preview_height}")

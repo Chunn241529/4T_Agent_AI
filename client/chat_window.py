@@ -2,13 +2,15 @@
 # -*- coding: utf-8 -*-
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtCore import Qt, QPoint, Signal
+from PySide6.QtGui import QTextCursor, QPixmap
 from ui_components import UIComponents
 from chat_logic import ChatLogic
 from spinner_logic import SpinnerLogic
+from screenshot_capture import ScreenshotOverlay
+from PySide6.QtCore import QByteArray, QBuffer, QIODevice
 
 class ChatWindow(QWidget):
     MAX_HEIGHT = 500
-    # Định nghĩa các tín hiệu cho QStateMachine
     toSearch = Signal()
     toThinking = Signal()
     toResponding = Signal()
@@ -24,6 +26,7 @@ class ChatWindow(QWidget):
         self.user_scrolling = False
         self.last_scroll_value = 0
         self.sources_data = []
+        self.current_screenshot_base64 = None
         
         self.ui = UIComponents(self)
         self.chat_logic = ChatLogic(self)
@@ -34,6 +37,7 @@ class ChatWindow(QWidget):
     def init_ui(self):
         self.ui.setup_ui()
         self.chat_logic.setup_connections()
+        # Xóa self.spinner_logic.setup() vì đã được xử lý trong __init__ của SpinnerLogic
 
     def focusInEvent(self, event):
         self._is_stable = True
@@ -45,8 +49,11 @@ class ChatWindow(QWidget):
         self.ui.input_box.setFocus()
 
     def focusOutEvent(self, event):
-        if self._is_stable:
+        if self._is_stable and not self.waiting_for_response:
+            print("focusOutEvent triggered, hiding window")
             self.hide()
+        else:
+            print("focusOutEvent ignored due to waiting_for_response or unstable state")
         super().focusOutEvent(event)
     
     def mousePressEvent(self, event):
@@ -90,3 +97,22 @@ class ChatWindow(QWidget):
 
     def apply_stylesheet(self):
         self.ui.apply_stylesheet()
+    
+    def pixmap_to_base64(self, pixmap):
+        """Chuyển QPixmap sang base64 string và hiển thị trong preview widget"""
+        scaled_pixmap = pixmap.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.ui.icon_label.setPixmap(scaled_pixmap)
+        self.ui.name_label.setText("Screenshot.png")
+        self.ui.size_label.setText(f"{pixmap.width()}x{pixmap.height()}")
+        self.ui.preview_widget.show()
+        self.adjust_window_height()
+        
+        byte_array = QByteArray()
+        buffer = QBuffer(byte_array)
+        buffer.open(QIODevice.WriteOnly)
+        pixmap.save(buffer, "PNG")
+        return byte_array.toBase64().data().decode()
+    
+    def show_screenshot_preview(self, pixmap):
+        """Hiển thị ảnh chụp trong preview widget"""
+        self.current_screenshot_base64 = self.pixmap_to_base64(pixmap)

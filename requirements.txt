@@ -20,7 +20,7 @@ datasets
 pandas
 tqdm
 
-
+opencv-python
 pydantic
 pydantic-settings
 aiohttp
