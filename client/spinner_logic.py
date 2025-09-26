@@ -142,7 +142,7 @@ class SpinnerLogic:
         self.spinner_index = (self.spinner_index + 1) % len(self.spinner_chars)
         if self.spinner_label:
             self.spinner_label.setText(self.spinner_chars[self.spinner_index])
-            print(f"Spinner updated to char: {self.spinner_chars[self.spinner_index]}")
+            # print(f"Spinner updated to char: {self.spinner_chars[self.spinner_index]}")
 
     def start_search(self):
         """Trigger chuyển sang trạng thái search"""

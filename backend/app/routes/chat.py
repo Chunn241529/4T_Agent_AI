@@ -9,13 +9,67 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from app.models import ChatRequest
 from app.services.web_searcher import search_web
-from app.services.llm_router import should_search_web, generate_search_query, decode_base64_image
+from app.services.llm_router import should_search_web, generate_search_query
 import aiohttp
-from datetime import datetime
-import pytz
+from app.services.get_time import get_current_time_info
 
 router = APIRouter(prefix="/api")
-OLLAMA_API_URL = "http://localhost:11434/api/chat"
+OLLAMA_API_URL = "http://localhost:11434/api"
+current_model = "4T-S"
+vision_model = "4T-V"
+brief_history_model = "4T-S"
+history = []  # Danh sách lưu lịch sử hội thoại
+
+# --- CẢI TIẾN: Thêm ngưỡng kích hoạt tóm tắt ---
+HISTORY_SUMMARY_THRESHOLD = 2048  # Kích hoạt tóm tắt nếu history vượt quá 2048 tokens (ước tính)
+
+# --- CẢI TIẾN: Hàm ước tính token ---
+def _estimate_token_count(messages: list[dict]) -> int:
+    """Ước tính tổng số token trong danh sách messages một cách đơn giản."""
+    total_tokens = 0
+    for message in messages:
+        # Heuristic: 1 token ~ 3 ký tự tiếng Việt. Đây là cách ước tính nhanh.
+        content = message.get("content", "")
+        if content:
+            total_tokens += len(content) // 3
+    return total_tokens
+
+async def summarize_history(session, past_conversations: list, prompt: str) -> str:
+    """
+    Tóm tắt lịch sử hội thoại sử dụng LLM.
+    """
+    if not past_conversations:
+        return ""
+
+    past_messages_flat = [msg for conv in past_conversations for msg in conv]
+    history_str = "\n\n".join([
+        f"[{msg['role'].capitalize()}]: {msg['content']}"
+        for msg in past_messages_flat
+        if msg["role"] in ["user", "assistant"]
+    ])
+
+    summary_prompt = f"""
+    Tóm tắt ngắn gọn lịch sử hội thoại sau bằng tiếng Việt, tập trung vào các điểm chính liên quan đến yêu cầu hiện tại '{prompt}':
+    {history_str}
+    Tóm tắt phải ngắn, chỉ giữ thông tin cần thiết.
+    """
+
+    payload = {
+        "model": brief_history_model,
+        "messages": [{"role": "user", "content": summary_prompt}],
+        "stream": False,
+        "options": {"temperature": 0.5, "num_predict": 1000}
+    }
+
+    async with session.post(f"{OLLAMA_API_URL}/chat", json=payload) as response:
+        if response.status == 200:
+            data = await response.json()
+            summary = data.get("message", {}).get("content", "").strip()
+            logger.info(f"Tóm tắt lịch sử: {summary[:50]}...")
+            return summary
+        else:
+            logger.error(f"Lỗi tóm tắt lịch sử: {response.status}")
+            return ""
 
 @router.post("/chat")
 async def chat(request: ChatRequest):
@@ -25,17 +79,16 @@ async def chat(request: ChatRequest):
 
     async def response_generator():
         try:
-            # Kiểm tra và xử lý hình ảnh nếu có
+            # Xử lý hình ảnh (giữ nguyên logic cũ)
             image_description = ""
             image_base64 = None
             if request.image:
                 try:
-                    # Làm sạch base64 và kiểm tra tính hợp lệ
                     image_base64 = request.image
                     if image_base64.startswith('data:image'):
                         image_base64 = image_base64.split(',')[1]
                     image_bytes = base64.b64decode(image_base64)
-                    if len(image_bytes) > 20 * 1024 * 1024:  # 20MB
+                    if len(image_bytes) > 20 * 1024 * 1024:
                         logger.warning("Hình ảnh quá lớn, vượt quá 20MB")
                         yield json.dumps({"type": "error", "message": {"content": "Hình ảnh quá lớn, vượt quá giới hạn 20MB"}}).encode('utf-8') + b'\n'
                         return
@@ -49,16 +102,16 @@ async def chat(request: ChatRequest):
                     yield json.dumps({"type": "image_processing"}).encode('utf-8') + b'\n'
                     async with aiohttp.ClientSession() as session:
                         payload = {
-                            "model": "gemma3:4b",
+                            "model": vision_model,
                             "messages": [{
                                 "role": "user",
-                                "content": "Hãy mô tả chi tiết bằng tiếng Việt những gì bạn thấy trong ảnh này. Giữ ngắn gọn trong 800 ký tự. Không nói những câu thừa thải. Không tiêu đề. Chỉ trả ra mô tả.",
+                                "content": "Hãy mô tả chi tiết bằng tiếng Việt những gì bạn thấy trong ảnh này. Không nói những câu thừa thải. Không tiêu đề. Chỉ trả ra mô tả.",
                                 "images": [image_base64]
                             }],
                             "stream": True,
-                            "options": {"num_keep": 0, "num_predict": 500, "temperature": 0.2}
+                            "options": {"num_keep": 0, "num_predict": 800, "temperature": 0.2}
                         }
-                        async with session.post(OLLAMA_API_URL, json=payload) as response:
+                        async with session.post(f"{OLLAMA_API_URL}/chat", json=payload) as response:
                             if response.status != 200:
                                 logger.error(f"Lỗi API Ollama (ảnh): {response.status}")
                                 image_description = "[Không thể xử lý ảnh]"
@@ -102,10 +155,28 @@ async def chat(request: ChatRequest):
                     image_description = "[Không thể xử lý ảnh]"
                     yield json.dumps({"type": "image_description", "content": image_description}).encode('utf-8') + b'\n'
 
-            # Thêm mô tả ảnh vào prompt để quyết định tìm kiếm
-            search_prompt = f"{prompt}\n\n[Mô tả ảnh: {image_description}]" if image_description else prompt
+            # --- CẢI TIẾN: Thay RAG bằng tóm tắt cho search_prompt và history_context ---
+            history_summary = ""
+            async with aiohttp.ClientSession() as session:
+                past_conversations = history[:-1] if history else []
+                past_messages_flat = [msg for conv in past_conversations for msg in conv]
+                history_tokens = _estimate_token_count(past_messages_flat)
 
-            # Xác định có cần tìm kiếm web không
+
+                logger.info("Lịch sử dài, tóm tắt lịch sử cho search_prompt và history_context.")
+                history_summary = await summarize_history(session, past_conversations, prompt)
+
+                # Làm sạch history_summary
+                history_summary = unicodedata.normalize('NFKC', history_summary) if history_summary else ""
+                history_summary = re.sub(r'[\x00-\x1F\x7F]+', '', history_summary)
+                history_summary = re.sub(r'\s+', ' ', history_summary).strip()
+                logger.info(f"Đã tạo history_summary: {history_summary[:50]}...")
+
+            # Tạo search_prompt với tóm tắt
+            search_prompt = f"{prompt}\n\n[Mô tả ảnh: {image_description}]" if image_description else prompt
+            if history_summary:
+                search_prompt += f"\n\n[Ngữ cảnh lịch sử liên quan]: {history_summary}"
+
             sources = []
             if prompt.lower().startswith("/search"):
                 search_query = prompt[7:].strip()
@@ -118,27 +189,23 @@ async def chat(request: ChatRequest):
             web_context = ""
             if perform_search:
                 yield json.dumps({"type": "search_start"}).encode('utf-8') + b'\n'
-                search_query = await generate_search_query(search_query)
+                # --- CẢI TIẾN: Thêm history_summary vào search_query ---
+                search_query_input = f"{search_query}\n\n[Ngữ cảnh lịch sử liên quan]: {history_summary}" if history_summary else search_query
+                logger.debug(f"Input cho generate_search_query: {search_query_input[:100]}...")
+                search_query = await generate_search_query(search_query_input)
                 web_results = await search_web(search_query)
                 if web_results:
                     sources = [{"url": res["url"], "title": res["title"]} for res in web_results[:3]]
                     web_context = "\n\n".join([
-                        f"### Nguồn: {res['title']}\n**URL**: {res['url']}\n**Nội dung**: {res['content'][:500]}"
+                        f"### Nguồn: {res['title']}\n**URL**: {res['url']}\n**Nội dung**: {res['content']}"
                         for res in web_results[:3]
                     ])
 
             yield json.dumps({"type": "sources", "sources": sources}).encode('utf-8') + b'\n'
 
-            # Giai đoạn 2: Tạo câu trả lời cuối với gemma3:4b
-            # Lấy thời gian hiện tại
-            tz = pytz.timezone('Asia/Ho_Chi_Minh')
-            now = datetime.now(tz)
-            day_name = ['Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy', 'Chủ Nhật'][now.weekday()]
-            current_time = now.strftime("%H:%M (GMT+7), %d/%m/%Y")
-            time_string = f"Hiện tại là {current_time}, {day_name}. (bạn không cần nhắc lại phần này) "
-
-            full_prompt = f"""
-                {time_string}.
+            time_string = get_current_time_info()
+            full_system = f"""
+                Thời gian hiện tại là: `{time_string}`.
                 Bạn là '4T', một trợ lý AI hữu ích.
                 Trả lời bằng tiếng Việt, định dạng markdown (sử dụng tiêu đề, gạch đầu dòng, trích dẫn nguồn nếu có).
                 Câu trả lời phải:
@@ -150,25 +217,65 @@ async def chat(request: ChatRequest):
                 {f"### Mô tả ảnh (thông tin do hệ thống phân tích, không phải do người dùng nhập):\n{image_description}\n" if image_description else ""}
 
                 ### Ngữ cảnh từ kết quả tìm kiếm web (do hệ thống tự động thu thập, KHÔNG phải do người dùng cung cấp):
-                {web_context}
+                web_context: {web_context}
             """
+
+            history.append([
+                {"role": "system", "content": full_system},
+                {"role": "user", "content": prompt}
+            ])
+            logger.info(f"Đã lưu system và user prompt vào lịch sử: {prompt[:50]}...")
 
             yield json.dumps({"type": "content_start"}).encode('utf-8') + b'\n'
 
+            # --- CẢI TIẾN: LOGIC TÓM TẮT DỰA TRÊN NGƯỠNG TOKEN ---
+            async with aiohttp.ClientSession() as session:
+                messages_for_llm = []
+
+                current_system_prompt = history[-1][0]
+                current_user_prompt = history[-1][1]
+                past_conversations = history[:-1]
+
+                past_messages_flat = [msg for conv in past_conversations for msg in conv]
+                history_tokens = _estimate_token_count(past_messages_flat)
+                logger.info(f"Ước tính token của lịch sử: {history_tokens}. Ngưỡng tóm tắt: {HISTORY_SUMMARY_THRESHOLD}")
+
+                if not past_conversations or history_tokens <= HISTORY_SUMMARY_THRESHOLD:
+                    logger.info("Lịch sử ngắn, sử dụng toàn bộ context.")
+                    messages_for_llm.append(current_system_prompt)
+                    messages_for_llm.extend(past_messages_flat)
+                    messages_for_llm.append(current_user_prompt)
+                else:
+                    logger.info("Lịch sử dài, tóm tắt lịch sử.")
+                    yield json.dumps({"type": "summary_status", "message": "Lịch sử dài, đang tóm tắt..."}).encode('utf-8') + b'\n'
+
+                    summary = await summarize_history(session, past_conversations, prompt)
+                    summary_message = {"role": "system", "content": f"Tóm tắt lịch sử: {summary}"}
+
+                    messages_for_llm.append(current_system_prompt)
+                    messages_for_llm.append(summary_message)
+                    messages_for_llm.append(current_user_prompt)
+
+            if not messages_for_llm or not all(isinstance(msg, dict) and "role" in msg and "content" in msg for msg in messages_for_llm):
+                logger.error("Danh sách messages không hợp lệ để gửi đến LLM")
+                error_message = "### Lỗi\nLỗi hệ thống: Không thể xây dựng ngữ cảnh hợp lệ."
+                yield json.dumps({"type": "error", "message": {"content": error_message}}).encode('utf-8') + b'\n'
+                return
+
             async with aiohttp.ClientSession() as session:
                 payload = {
-                    "model": "gemma3:4b",
-                    "messages": [
-                        {"role": "system", "content": full_prompt},
-                        {"role": "user", "content": f"### Câu hỏi của người dùng:\n{prompt}"}
-                    ],
+                    "model": current_model,
+                    "messages": messages_for_llm,
                     "stream": True,
                     "options": {"temperature": 0.7, "num_predict": -1}
                 }
-                async with session.post(OLLAMA_API_URL, json=payload) as response:
+                logger.debug(f"Payload gửi đến API Ollama: {json.dumps(payload, ensure_ascii=False)[:300]}...")
+                response_content = ""
+                async with session.post(f"{OLLAMA_API_URL}/chat", json=payload) as response:
                     if response.status != 200:
-                        logger.error(f"Lỗi API Ollama (trả lời): {response.status}")
-                        error_message = f"### Lỗi\nKhông thể xử lý yêu cầu do lỗi server"
+                        error_detail = await response.text()
+                        logger.error(f"Lỗi API Ollama (trả lời): {response.status}, Chi tiết: {error_detail}")
+                        error_message = f"### Lỗi\nKhông thể xử lý yêu cầu do lỗi server: {error_detail}"
                         yield json.dumps({"type": "error", "message": {"content": error_message}}).encode('utf-8') + b'\n'
                         return
 
@@ -178,18 +285,22 @@ async def chat(request: ChatRequest):
                                 data = json.loads(line.decode('utf-8'))
                                 if 'message' in data and 'content' in data['message']:
                                     content = data['message']['content']
+                                    response_content += content
                                     yield json.dumps({"type": "content", "message": {"content": content}}).encode('utf-8') + b'\n'
                             except json.JSONDecodeError as e:
                                 logger.error(f"Lỗi giải mã JSON: {e}")
-                                yield json.dumps({"type": "error", "message": {"content": f"### Lỗi\nLỗi giải mã dữ liệu: {str(e)}"}}).encode('utf-8') + b'\n'
-                            finally:
-                                gc.collect()  # Cleanup sau mỗi chunk
+                                continue
+
+                    if response_content:
+                        history[-1].append({"role": "assistant", "content": response_content})
+                        logger.info(f"Hoàn tất lưu câu trả lời vào lịch sử: {response_content[:50]}...")
+
         except Exception as e:
-            logger.error(f"Lỗi khi xử lý chat: {e}")
-            error_message = f"### Lỗi\nKhông thể xử lý yêu cầu do: {str(e)}"
+            logger.error(f"Lỗi nghiêm trọng khi xử lý chat: {e}", exc_info=True)
+            error_message = f"### Lỗi\nĐã có lỗi không mong muốn xảy ra: {str(e)}"
             yield json.dumps({"type": "error", "message": {"content": error_message}}).encode('utf-8') + b'\n'
         finally:
             gc.collect()
-            logger.info("Hoàn tất xử lý chat và cleanup bộ nhớ")
+            logger.info("Hoàn tất xử lý yêu cầu chat và cleanup bộ nhớ")
 
     return StreamingResponse(response_generator(), media_type="application/x-ndjson")

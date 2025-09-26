@@ -61,7 +61,7 @@ class ChatLogic:
                 self.ollama_thread.wait()
             self.ollama_thread.deleteLater()
             self.ollama_thread = None
-            
+
         self.ollama_thread = OllamaWorker(prompt_text, image_base64=image_base64)
         self.ollama_thread.chunk_received.connect(self._buffer_chunk)
         self.ollama_thread.search_started.connect(self.on_search_started)
@@ -81,7 +81,7 @@ class ChatLogic:
         self.chunk_buffer += chunk
         if not self.buffer_timer.isActive():
             self.buffer_timer.start()
-        print(f"Buffered chunk: {chunk[:50]}...")
+        # print(f"Buffered chunk: {chunk[:50]}...")
 
     def _flush_buffer(self) -> None:
         if not self.chunk_buffer:
@@ -96,11 +96,11 @@ class ChatLogic:
         scroll_bar = self.parent.ui.scroll_area.verticalScrollBar()
         scroll_value = scroll_bar.value()
         scroll_max = scroll_bar.maximum()
-        print(f"Before setHtml: scroll_value={scroll_value}, scroll_max={scroll_max}")
+        # print(f"Before setHtml: scroll_value={scroll_value}, scroll_max={scroll_max}")
 
         wrapped_html = f'<div style="padding: 15px 10px;">{html_content}</div>'
         self.parent.ui.response_display.setHtml(wrapped_html)
-        print("Response HTML set")
+        # print("Response HTML set")
 
         if not self.parent.user_scrolling and self.parent.full_response_md:
             cursor = self.parent.ui.response_display.textCursor()
