@@ -3,7 +3,7 @@
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    OLLAMA_MODEL: str = "gemma3:4b"
+    OLLAMA_MODEL: str = "4T-Base"
     MAX_CACHE_SIZE: int = 1000
     CACHE_TTL_SECONDS: int = 3600
 

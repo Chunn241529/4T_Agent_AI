@@ -1,5 +1,6 @@
 # worker.py
 # -*- coding: utf-8 -*-
+from asyncio.log import logger
 import json
 import base64
 import gc
@@ -9,7 +10,8 @@ import asyncio
 
 class OllamaWorker(QThread):
     chunk_received = Signal(str)
-    search_started = Signal()
+    thinking_received = Signal(str)
+    search_started = Signal(str)
     search_sources = Signal(str)
     content_started = Signal()
     image_processing = Signal()
@@ -17,10 +19,11 @@ class OllamaWorker(QThread):
     error_received = Signal(str)
     finished = Signal()
 
-    def __init__(self, prompt: str, image_base64: str = None):
+    def __init__(self, prompt: str, image_base64: str = None, is_thinking: bool = False):
         super().__init__()
         self.prompt = prompt
         self.image_base64 = image_base64
+        self.is_thinking = is_thinking
         self.base_url = "http://localhost:8000"
         self.max_image_size = 20 * 1024 * 1024  # 20MB giới hạn
 
@@ -38,7 +41,6 @@ class OllamaWorker(QThread):
 
     async def _stream_response(self):
         try:
-            # Kiểm tra và làm sạch base64 nếu có
             cleaned_image_base64 = None
             if self.image_base64:
                 try:
@@ -56,11 +58,13 @@ class OllamaWorker(QThread):
                     return
 
             async with aiohttp.ClientSession() as session:
-                # Sử dụng gemma3:4b thống nhất
-                payload = {"prompt": self.prompt, "model": "gemma3:4b"}
+                payload = {
+                    "prompt": self.prompt
+                }
                 if cleaned_image_base64:
                     payload["image"] = cleaned_image_base64
-                
+                logger.debug(f"Gửi payload: {json.dumps(payload, ensure_ascii=False)[:100]}...")
+
                 async with session.post(
                     f"{self.base_url}/api/chat",
                     json=payload
@@ -71,31 +75,42 @@ class OllamaWorker(QThread):
                         return
 
                     async for line in response.content:
-                        if line:
-                            try:
-                                data = json.loads(line.decode('utf-8'))
-                                if data.get("type") == "search_start":
-                                    self.search_started.emit()
-                                elif data.get("type") == "sources":
-                                    self.search_sources.emit(json.dumps(data.get("sources", [])))
-                                elif data.get("type") == "content_start":
-                                    self.content_started.emit()
-                                elif data.get("type") == "content":
-                                    self.chunk_received.emit(data["message"]["content"])
-                                elif data.get("type") == "error":
-                                    self.error_received.emit(data["message"]["content"])
-                                elif data.get("type") == "image_processing":
-                                    self.image_processing.emit()
-                                elif data.get("type") == "image_description":
-                                    self.image_description.emit(data["content"])
-                            except json.JSONDecodeError as e:
-                                self.error_received.emit(f"Lỗi giải mã JSON: {str(e)}")
-                                print(f"JSON decode error: {str(e)}")
-                            finally:
-                                gc.collect()  # Cleanup sau mỗi chunk
+                        if not line.strip():
+                            logger.debug("Bỏ qua dòng rỗng từ server")
+                            continue
+                        try:
+                            data = json.loads(line.decode('utf-8'))
+                            if data.get("type") == "search_start":
+                                self.search_started.emit(data.get("query", ""))
+                            elif data.get("type") == "sources":
+                                self.search_sources.emit(json.dumps(data.get("sources", [])))
+                            elif data.get("type") == "content_start":
+                                self.content_started.emit()
+                            elif data.get("type") == "image_processing":
+                                self.image_processing.emit()
+                            elif data.get("type") == "image_description":
+                                self.image_description.emit(data["content"])
+                            elif data.get("type") == "error":
+                                self.error_received.emit(data["message"]["content"])
+                            elif "message" in data:
+                                message = data["message"]
+                                if "thinking" in message:
+                                    thinking = message["thinking"]
+                                    if thinking and isinstance(thinking, str):
+                                        self.thinking_received.emit(thinking)
+                                if "content" in message:
+                                    content = message["content"]
+                                    if content and isinstance(content, str):
+                                        self.chunk_received.emit(content)
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Lỗi giải mã JSON: {e}, Raw line: {line.decode('utf-8')[:100]}")
+                            self.error_received.emit(f"Dữ liệu không hợp lệ từ server: {line.decode('utf-8')[:100]}")
+                            continue
+                        finally:
+                            gc.collect()
         except Exception as e:
             self.error_received.emit(f"Lỗi kết nối server: {str(e)}")
             print(f"Server connection error: {str(e)}")
         finally:
-            gc.collect()  # Cleanup cuối cùng
+            gc.collect()
             self.finished.emit()

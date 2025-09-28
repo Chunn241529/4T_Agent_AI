@@ -25,17 +25,22 @@ class UIComponents:
         self.icon_label = None
         self.name_label = None
         self.size_label = None
+        self.thinking_widget = None
+        self.thinking_display = None
+        self.toggle_button = None
 
         # Khởi tạo các đối tượng animation
         self.height_animation = None
         self.input_box_animation_group = None
-
+        self.thinking_animation = None
 
     def setup_ui(self):
         self.parent.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.parent.setAttribute(Qt.WA_TranslucentBackground)
         self.parent.setWindowTitle("4T Assistant")
         self.parent.setFixedWidth(600)
+        # Ẩn window khi mới chạy
+        self.parent.hide()
 
         self.parent.layout = QVBoxLayout(self.parent)
         self.parent.layout.setContentsMargins(0, 0, 0, 0)
@@ -84,7 +89,6 @@ class UIComponents:
         frame_layout.addWidget(self.preview_widget)
         self.preview_widget.hide()
 
-        # --- Cấu hình Input Box đã được nâng cấp ---
         self.input_box = QTextEdit(self.main_frame)
         self.input_box.setObjectName("inputBox")
         self.input_box.setPlaceholderText("Hỏi 4T...")
@@ -92,8 +96,32 @@ class UIComponents:
         self.input_box.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.input_box.textChanged.connect(self.adjust_input_box_height)
         self.input_box.keyPressEvent = self.parent.handle_key_press
-        self.adjust_input_box_height() # Đặt chiều cao ban đầu
-        # --- Kết thúc cấu hình Input Box ---
+        self.adjust_input_box_height()
+        frame_layout.addWidget(self.input_box)
+
+        # Thêm thinking_widget dưới input_box
+        self.thinking_widget = QWidget(self.main_frame)
+        self.thinking_widget.setObjectName("thinkingWidget")
+        thinking_layout = QVBoxLayout(self.thinking_widget)
+        thinking_layout.setContentsMargins(10, 5, 10, 5)
+        thinking_layout.setSpacing(5)
+
+        self.toggle_button = QPushButton("Suy luận ▼")
+        self.toggle_button.setObjectName("toggleButton")
+        self.toggle_button.setFixedHeight(30)
+        self.toggle_button.setCursor(Qt.PointingHandCursor)
+        self.toggle_button.clicked.connect(self.toggle_thinking)
+        thinking_layout.addWidget(self.toggle_button)
+
+        self.thinking_display = QTextBrowser()
+        self.thinking_display.setObjectName("thinkingDisplay")
+        self.thinking_display.setOpenExternalLinks(True)
+        self.thinking_display.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.thinking_display.setFixedHeight(0)  # Ban đầu ẩn
+        thinking_layout.addWidget(self.thinking_display)
+
+        frame_layout.addWidget(self.thinking_widget)
+        self.thinking_widget.hide()
 
         self.scroll_area = QScrollArea(self.main_frame)
         self.scroll_area.setWidgetResizable(True)
@@ -105,8 +133,9 @@ class UIComponents:
         self.response_display.setOpenExternalLinks(True)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.scroll_area.setWidget(self.response_display)
+        # Hiển thị text mặc định
+        self.response_display.setText("Bạn cần mình giúp gì không?")
 
-        frame_layout.addWidget(self.input_box)
         frame_layout.addWidget(self.scroll_area)
 
         self.container_layout.addWidget(self.main_frame)
@@ -148,6 +177,47 @@ class UIComponents:
             #previewWidget:hover {
                 background-color: #3a3b45;
                 border: 1px solid #61afef;
+            }
+            #thinkingWidget {
+                background-color: transparent;
+                border-radius: 9px;
+                max-height: 40px;
+                transition: max-height 0.2s ease-in-out;
+            }
+            #thinkingWidget.expanded {
+                max-height: 250px;
+            }
+            #thinkingWidget:hover {
+                background-color: transparent;
+                border: 1px solid #61afef;
+            }
+            #toggleButton {
+                background-color: transparent;
+                border-radius: 5px;
+                color: #e0e0e0;
+                font-size: 14px;
+                text-align: left;
+                padding: 5px;
+            }
+            #toggleButton:hover {
+                background-color: transparent;
+                border: 1px solid #61afef;
+            }
+            #toggleButton:pressed {
+                background-color: transparent;
+            }
+            #thinkingDisplay {
+                background-color: #2c2d35;
+                border: none;
+                color: #e0e0e0;
+                font-size: 14px;
+            }
+            #thinkingDisplay a {
+                color: #61afef;
+                text-decoration: none;
+            }
+            #thinkingDisplay a:hover {
+                text-decoration: underline;
             }
             #inputBox {
                 background-color: #2c2d35;
@@ -250,8 +320,75 @@ class UIComponents:
             self.parent.dragging = False
             event.accept()
 
+    def clear_default_text(self):
+        # Kiểm tra nếu đang hiển thị text mặc định
+        if self.response_display.toPlainText() == "Bạn cần mình giúp gì không?":
+            self.response_display.clear()
+
+    def handle_enter(self):
+        # Clear text mặc định nếu có khi nhấn Enter
+        self.clear_default_text()
+
+    def toggle_thinking(self, show_full_content=False):
+        if self.thinking_animation and self.thinking_animation.state() == QParallelAnimationGroup.Running:
+            self.thinking_animation.stop()
+
+        self.thinking_animation = QParallelAnimationGroup(self.parent)
+        current_height = self.parent.height()
+        is_expanding = self.thinking_display.height() == 0
+
+        # Toggle expanded class
+        if is_expanding:
+            self.thinking_widget.setProperty('class', 'expanded')
+        else:
+            self.thinking_widget.setProperty('class', '')
+        self.thinking_widget.style().unpolish(self.thinking_widget)
+        self.thinking_widget.style().polish(self.thinking_widget)
+
+        if not is_expanding:
+            # Ẩn thinking_display và giữ nguyên window height
+            max_anim = QPropertyAnimation(self.thinking_display, b"maximumHeight")
+            max_anim.setDuration(200)
+            max_anim.setStartValue(self.thinking_display.height())
+            max_anim.setEndValue(0)
+            max_anim.setEasingCurve(QEasingCurve.InOutQuad)
+
+            min_anim = QPropertyAnimation(self.thinking_display, b"minimumHeight")
+            min_anim.setDuration(200)
+            min_anim.setStartValue(self.thinking_display.height())
+            min_anim.setEndValue(0)
+            min_anim.setEasingCurve(QEasingCurve.InOutQuad)
+
+            self.thinking_animation.addAnimation(max_anim)
+            self.thinking_animation.addAnimation(min_anim)
+            self.toggle_button.setText("Suy luận ▼")
+        else:
+            # Hiển thị thinking_display
+            doc_height = self.thinking_display.document().size().toSize().height()
+            # Nếu show_full_content=True, mở toàn bộ nội dung, nếu không thì mở tối thiểu
+            target_height = min(doc_height + 20, 200) if show_full_content and doc_height > 0 else 100
+
+            max_anim = QPropertyAnimation(self.thinking_display, b"maximumHeight")
+            max_anim.setDuration(200)
+            max_anim.setStartValue(0)
+            max_anim.setEndValue(target_height)
+            max_anim.setEasingCurve(QEasingCurve.InOutQuad)
+
+            min_anim = QPropertyAnimation(self.thinking_display, b"minimumHeight")
+            min_anim.setDuration(200)
+            min_anim.setStartValue(0)
+            min_anim.setEndValue(0)  # Giữ minimumHeight = 0
+            min_anim.setEasingCurve(QEasingCurve.InOutQuad)
+
+            self.thinking_animation.addAnimation(max_anim)
+            self.thinking_animation.addAnimation(min_anim)
+            self.toggle_button.setText("Suy luận ▲")
+
+        # Chỉ gọi adjust_window_height sau khi animation hoàn tất
+        self.thinking_animation.finished.connect(lambda: self.adjust_window_height(staged=not is_expanding))
+        self.thinking_animation.start()
+
     def adjust_input_box_height(self):
-        """Tự động điều chỉnh chiều cao của input box dựa trên nội dung, có hiệu ứng animation."""
         min_height = 80
         max_height = 150
 
@@ -284,8 +421,7 @@ class UIComponents:
             self.input_box_animation_group.addAnimation(max_anim)
             self.input_box_animation_group.start()
 
-    def adjust_window_height(self):
-        """Điều chỉnh chiều cao toàn bộ cửa sổ với hiệu ứng animation."""
+    def adjust_window_height(self, staged=False):
         doc_height = self.response_display.document().size().toSize().height()
         input_height = self.input_box.height()
         preview_height = self.preview_widget.sizeHint().height() if self.preview_widget.isVisible() else 0
@@ -297,7 +433,21 @@ class UIComponents:
         spacing = self.main_frame.layout().spacing()
         response_padding = 20
 
-        target_height = int(input_height + doc_height + preview_height + button_height + container_margin + frame_margin + spacing * 2 + response_padding)
+        # Calculate thinking widget height based on state
+        thinking_height = 0
+        if self.thinking_widget.isVisible():
+            if self.thinking_display.height() > 0:
+                thinking_height = 40 + self.thinking_display.height() # Toggle + content height
+            else:
+                thinking_height = 40 # Just toggle height
+
+        if staged:
+            # Keep current height during response
+            target_height = self.parent.height()
+        else:
+            # Adjust to full height when complete
+            target_height = int(input_height + doc_height + preview_height + thinking_height + button_height + container_margin + frame_margin + spacing * 3 + response_padding)
+
         final_height = min(target_height, self.parent.MAX_HEIGHT)
 
         current_height = self.parent.height()
