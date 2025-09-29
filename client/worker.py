@@ -7,6 +7,7 @@ import gc
 from PySide6.QtCore import QThread, Signal
 import aiohttp
 import asyncio
+import re
 
 class OllamaWorker(QThread):
     chunk_received = Signal(str)
@@ -26,6 +27,9 @@ class OllamaWorker(QThread):
         self.is_thinking = is_thinking
         self.base_url = "http://localhost:8000"
         self.max_image_size = 20 * 1024 * 1024  # 20MB giới hạn
+        self.partial_buffer = ""  # Biến để lưu phần còn lại nếu thẻ bị chia cắt
+        self.thinking_buffer = ""  # Biến để tích lũy nội dung thinking
+        self.in_thinking = False  # Trạng thái đang trong thinking
 
     def run(self):
         try:
@@ -83,7 +87,10 @@ class OllamaWorker(QThread):
                             if data.get("type") == "search_start":
                                 self.search_started.emit(data.get("query", ""))
                             elif data.get("type") == "sources":
-                                self.search_sources.emit(json.dumps(data.get("sources", [])))
+                                sources_str = json.dumps(data.get("sources", []), separators=(',', ':')).replace('\n', '')
+                                if len(sources_str) > 20:
+                                    sources_str = sources_str[:20] + "..."
+                                self.search_sources.emit(sources_str)
                             elif data.get("type") == "content_start":
                                 self.content_started.emit()
                             elif data.get("type") == "image_processing":
@@ -101,7 +108,57 @@ class OllamaWorker(QThread):
                                 if "content" in message:
                                     content = message["content"]
                                     if content and isinstance(content, str):
-                                        self.chunk_received.emit(content)
+                                        # Thay thế ký tự escape
+                                        content = content.replace('\\u003c', '<').replace('\\u003e', '>')
+                                        # Kết hợp với partial_buffer
+                                        content = self.partial_buffer + content
+                                        self.partial_buffer = ""
+
+                                        # Xử lý nội dung
+                                        if not self.in_thinking:
+                                            think_start = content.find('<think>')
+                                            if think_start == -1:
+                                                # Không có <think>, gửi qua chunk_received
+                                                if content:
+                                                    self.chunk_received.emit(content)
+                                            else:
+                                                # Gửi phần trước <think> qua chunk_received
+                                                before = content[:think_start]
+                                                if before:
+                                                    self.chunk_received.emit(before)
+                                                # Bỏ <think>, chuyển trạng thái
+                                                content = content[think_start + len('<think>'):]
+                                                self.in_thinking = True
+                                                # Thêm phần còn lại vào thinking_buffer
+                                                self.thinking_buffer += content
+                                                if self.thinking_buffer:
+                                                    self.thinking_received.emit(self.thinking_buffer)
+                                                    self.thinking_buffer = ""
+                                        else:
+                                            # Đang trong thinking, tìm </think>
+                                            think_end = content.find('</think>')
+                                            if think_end == -1:
+                                                # Chưa có </think>, thêm vào thinking_buffer
+                                                self.thinking_buffer += content
+                                                if self.thinking_buffer:
+                                                    self.thinking_received.emit(self.thinking_buffer)
+                                                    self.thinking_buffer = ""
+                                            else:
+                                                # Có </think>, gửi thinking_buffer + phần trước </think>
+                                                thinking_part = content[:think_end]
+                                                if thinking_part:
+                                                    self.thinking_buffer += thinking_part
+                                                    self.thinking_received.emit(self.thinking_buffer)
+                                                    self.thinking_buffer = ""
+                                                # Gửi phần sau </think> qua chunk_received
+                                                after = content[think_end + len('</think>'):]
+                                                if after:
+                                                    self.chunk_received.emit(after)
+                                                self.in_thinking = False
+
+                                        # Lưu phần còn lại nếu thẻ bị cắt
+                                        if content and (content.endswith('<think') or content.endswith('</think') or content.endswith('<')):
+                                            self.partial_buffer = content
                         except json.JSONDecodeError as e:
                             logger.error(f"Lỗi giải mã JSON: {e}, Raw line: {line.decode('utf-8')[:100]}")
                             self.error_received.emit(f"Dữ liệu không hợp lệ từ server: {line.decode('utf-8')[:100]}")
@@ -112,5 +169,12 @@ class OllamaWorker(QThread):
             self.error_received.emit(f"Lỗi kết nối server: {str(e)}")
             print(f"Server connection error: {str(e)}")
         finally:
+            # Gửi phần còn lại
+            if self.thinking_buffer:
+                self.thinking_received.emit(self.thinking_buffer)
+                self.thinking_buffer = ""
+            if self.partial_buffer:
+                self.chunk_received.emit(self.partial_buffer)
+                self.partial_buffer = ""
             gc.collect()
             self.finished.emit()

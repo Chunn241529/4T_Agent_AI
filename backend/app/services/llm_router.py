@@ -8,7 +8,7 @@ from app.services.get_time import get_current_time_info
 from app.services.session_manager import SessionManager
 
 OLLAMA_API_URL = "http://localhost:11434/api/chat"
-model_check = "gpt-oss:20b"  # Sử dụng model nhỏ hơn cho routing
+model_check = "4T-S"  # Sử dụng model nhỏ hơn cho routing
 
 # Keywords cho quick check trước khi dùng LLM
 SEARCH_KEYWORDS = {
@@ -194,7 +194,7 @@ async def generate_search_query(prompt: str) -> str:
     try:
         session = await SessionManager.get_session()
         payload = {
-            "model": model_check,
+            "model": "4T",
             "messages": [
                 {"role": "user", "content": system_prompt}
             ],

@@ -90,7 +90,7 @@ async def chat(request: ChatRequest):
         try:
             # Khởi tạo các biến cơ bản
             is_thinking = request.is_thinking
-            current_model = "4T:latest"
+            current_model = "4T"
             messages_for_llm = []
 
             # Chuẩn bị coroutines cho xử lý song song
@@ -231,7 +231,7 @@ async def chat(request: ChatRequest):
                 {"role": "user", "content": prompt}
             ]
             is_thinking = request.is_thinking or await should_thinking(messages_for_model_decision)
-            current_model = "gpt-oss:20b" if is_thinking else "4T:latest"
+            current_model = "qwen3:30b-a3b-thinking-2507-q4_K_M" if is_thinking else "4T:latest"
             logger.info(f"Model được chọn: {current_model} (is_thinking={is_thinking})")
 
             # 4. TẠO SYSTEM PROMPT VÀ USER PROMPT
