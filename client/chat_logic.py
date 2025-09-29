@@ -22,7 +22,8 @@ class ChatLogic:
         self.parent.user_scrolling = False
 
     def setup_connections(self) -> None:
-        pass
+        self.parent.ui.send_stop_button.send_clicked.connect(self.send_prompt)
+        self.parent.ui.send_stop_button.stop_clicked.connect(self.stop_worker)
 
     def handle_key_press(self, event) -> None:
         if event.key() == Qt.Key_Return and not event.modifiers() & Qt.ShiftModifier:
@@ -55,6 +56,7 @@ class ChatLogic:
         self.parent.sources_data = []
         self.parent.waiting_for_response = True
         self.parent.spinner_logic.start_thinking()
+        self.parent.ui.send_stop_button.set_running(True)
 
         image_base64 = self.parent.current_screenshot_base64
 
@@ -79,6 +81,21 @@ class ChatLogic:
         self.ollama_thread.start()
         print("OllamaWorker started")
 
+    def stop_worker(self):
+        if self.ollama_thread and self.ollama_thread.isRunning():
+            print("Stopping OllamaWorker")
+            self.ollama_thread.stop()
+            self.ollama_thread.wait()
+            self.ollama_thread.deleteLater()
+            self.ollama_thread = None
+        self.parent.waiting_for_response = False
+        self.parent.ui.send_stop_button.set_running(False)
+        self.parent.spinner_logic.reset_to_idle()
+        self.parent.ui.input_box.setEnabled(True)
+        self.parent.ui.input_box.setPlaceholderText("Hỏi 4T...")
+        self.parent.ui.thinking_widget.hide()
+        self.parent.ui.response_display.append("\n[Đã dừng phản hồi]")
+
     def extract_image_from_input(self):
         return None
 
@@ -89,7 +106,6 @@ class ChatLogic:
 
     def _buffer_thinking(self, thinking: str) -> None:
         if thinking and thinking.strip():
-            # Loại bỏ dòng trống và thêm xuống dòng nếu cần
             thinking = thinking.strip()
             if self.thinking_buffer and not self.thinking_buffer.endswith('\n'):
                 self.thinking_buffer += '\n'
@@ -111,12 +127,10 @@ class ChatLogic:
                     self.full_thinking_md, extensions=['fenced_code', 'tables', 'codehilite']
                 )
                 self.parent.ui.thinking_display.setHtml(f'<div style="padding: 10px;">{html_content}</div>')
-                # Cuộn tự động đến cuối
                 cursor = self.parent.ui.thinking_display.textCursor()
                 cursor.movePosition(QTextCursor.End)
                 self.parent.ui.thinking_display.setTextCursor(cursor)
                 self.parent.ui.thinking_display.ensureCursorVisible()
-                # Chỉ toggle nếu thinking_display chưa mở
                 if self.parent.ui.thinking_display.height() == 0:
                     self.parent.ui.toggle_thinking(show_full_content=False)
             else:
@@ -138,14 +152,12 @@ class ChatLogic:
 
         self.chunk_buffer = ""
         self.thinking_buffer = ""
-        # Chỉ tăng height vừa đủ để thấy toggle button (nếu có)
         self.parent.ui.adjust_window_height(staged=True)
 
     def on_search_started(self, query: str):
-        """Xử lý khi bắt đầu tìm kiếm"""
-        self.parent.spinner_logic.start_search()  # Khởi tạo spinner trước
+        self.parent.spinner_logic.start_search()
         if query and query.strip():
-            self.parent.spinner_logic.update_search_text(query.strip())  # Cập nhật text sau
+            self.parent.spinner_logic.update_search_text(query.strip())
 
     def on_search_sources(self, sources_json: str):
         try:
@@ -230,6 +242,7 @@ class ChatLogic:
                 self.ollama_thread.wait()
             self.ollama_thread.deleteLater()
             self.ollama_thread = None
+        self.parent.ui.send_stop_button.set_running(False)
 
     def on_generation_finished(self):
         print("Generation finished")
@@ -238,12 +251,10 @@ class ChatLogic:
         self.parent.ui.input_box.clear()
         self.parent.waiting_for_response = False
         self.parent.spinner_logic.reset_to_idle()
-        # Mở thinking widget hoàn toàn sau khi generation finished
         if self.parent.ui.thinking_widget.isVisible() and self.full_thinking_md.strip():
             self.parent.ui.toggle_thinking(show_full_content=True)
         else:
             self.parent.ui.thinking_widget.hide()
-        # Tăng height tối đa sau khi response hoàn tất
         self.parent.ui.adjust_window_height(staged=False)
         if self.ollama_thread:
             if self.ollama_thread.isRunning():
@@ -251,3 +262,4 @@ class ChatLogic:
                 self.ollama_thread.wait()
             self.ollama_thread.deleteLater()
             self.ollama_thread = None
+        self.parent.ui.send_stop_button.set_running(False)

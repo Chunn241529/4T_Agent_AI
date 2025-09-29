@@ -14,7 +14,7 @@ chromadb
 PySide6
 duckduckgo-search
 ddgs
-beautifulsoup4 
+beautifulsoup4
 lxml
 datasets
 pandas
@@ -26,4 +26,6 @@ pydantic-settings
 aiohttp
 
 cachetools
+
+faiss-cpu
 

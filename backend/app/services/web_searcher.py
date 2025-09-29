@@ -1,58 +1,133 @@
 # app/services/web_searcher.py
 import asyncio
-from ddgs import DDGS
+import numpy as np
+from typing import List, Dict, Literal, Optional
+
+from app.services.search_cache import search_cache
+from app.services.web_crawler import crawl_urls
+from app.services.session_manager import SessionManager
 from app.utils.logger import logger
-from app.services.web_crawler import crawl_single_url
+
+from ddgs import DDGS
 import aiohttp
 
-TRUSTED_DOMAINS = [
-    'vnexpress.net', 'reuters.com', 'bbc.com', 'theguardian.com',
-    'nytimes.com', 'washingtonpost.com', 'lego.com', 'apnews.com'
-]
+OLLAMA_EMBED_MODEL = "nomic-embed-text"
+OLLAMA_SUMMARY_MODEL = "4T-S"
+OLLAMA_API_URL = "http://localhost:11434/api"
 
-def sync_search_ddg(query: str):
+async def embed_text(text: str) -> Optional[np.ndarray]:
     try:
-        logger.info(f"Đang tìm kiếm DuckDuckGo: {query}")
-        with DDGS() as ddgs:
-            results = ddgs.text(query, max_results=10)  # Tăng để có thêm lựa chọn
-            urls = [
-                result['href'] for result in results
-                if result['href'].startswith('http') and
-                'login' not in result['href'].lower() and
-                not any(kw in result['href'].lower() for kw in ['typhoon', 'storm'])
-            ]
-            # Ưu tiên domain đáng tin cậy
-            trusted_urls = [url for url in urls if any(domain in url.lower() for domain in TRUSTED_DOMAINS)]
-            other_urls = [url for url in urls if url not in trusted_urls]
-            logger.info(f"Tìm thấy {len(urls)} URL từ DuckDuckGo (trusted: {len(trusted_urls)})")
-            return trusted_urls + other_urls[:10 - len(trusted_urls)]  # Giới hạn 10 URL
+        session = await SessionManager.get_session()
+        payload = {"model": OLLAMA_EMBED_MODEL, "input": text}
+        async with session.post(f"{OLLAMA_API_URL}/embed", json=payload) as resp:
+            data = await resp.json()
+            return np.array(data["embeddings"][0], dtype="float32")
     except Exception as e:
-        logger.error(f"Lỗi khi tìm kiếm DuckDuckGo: {e}")
+        logger.error(f"Lỗi embed: {e}")
+        return None
+
+async def summarize_text(text: str, query: str) -> str:
+    try:
+        session = await SessionManager.get_session()
+        prompt = f"Tóm tắt ngắn gọn (<=5 câu) nội dung sau, tập trung vào: {query}\n\n{text}"
+        payload = {
+            "model": OLLAMA_SUMMARY_MODEL,
+            "prompt": prompt,
+            "stream": False,
+        }
+        async with session.post(f"{OLLAMA_API_URL}/generate", json=payload) as resp:
+            data = await resp.json()
+            return data.get("response", "").strip()
+    except Exception as e:
+        logger.error(f"Lỗi summarize: {e}")
+        return text[:500]
+
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+async def fallback_search(query: str, max_results: int = 10) -> List[str]:
+    try:
+        url = f"https://www.bing.com/search?q={query.replace(' ', '+')}"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127 Safari/537.36"}
+        session = await SessionManager.get_session()
+        async with session.get(url, headers=headers) as resp:
+            if resp.status != 200:
+                return []
+            html = await resp.text()
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "lxml")
+            links = [a["href"] for a in soup.select("li.b_algo h2 a")[:max_results] if "href" in a.attrs]
+            return links
+    except Exception as e:
+        logger.error(f"Lỗi fallback search: {e}")
         return []
 
-async def search_web(query: str):
+async def search_web(
+    query: str,
+    max_results: int = 10,
+    mode: Literal["raw", "rerank", "summary"] = "rerank",
+    rerank_top_k: int = 5,
+) -> List[Dict]:
+    """
+    Search web với 3 chế độ:
+      - raw: chỉ lấy kết quả search + crawl
+      - rerank: semantic re-rank
+      - summary: tóm tắt content
+    """
+    cached = search_cache.get(query)
+    if cached:
+        logger.info(f"Dùng cache cho query: {query}")
+        return cached
+
+    results = []
     try:
-        urls = await asyncio.to_thread(sync_search_ddg, query)
+        urls = []
+        try:
+            ddgs = DDGS()
+            search_hits = ddgs.text(query, region="us-en", max_results=max_results)
+            urls = [h["href"] for h in search_hits if "href" in h]
+        except Exception as e:
+            logger.error(f"Lỗi DDGS: {e}, dùng fallback Bing")
+            urls = await fallback_search(query, max_results)
+
         if not urls:
-            logger.info("Không tìm thấy URL nào từ DuckDuckGo")
-            return [{"url": "", "content": "Không tìm thấy thông tin về RAGASA 2025. Vui lòng thử lại với từ khóa cụ thể hơn.", "title": "Không có kết quả"}]
+            return []
 
-        async with aiohttp.ClientSession() as session:
-            tasks = [crawl_single_url(url, session, query) for url in urls]
-            contents = await asyncio.gather(*tasks, return_exceptions=True)
+        crawled = await crawl_urls(urls, query=query, concurrency=10)
 
-            results = []
-            for url, content in zip(urls, contents):
-                if isinstance(content, str) and content and len(content) > 150:  # Tăng ngưỡng chất lượng
-                    title = content.split('\n')[0] or url
-                    results.append({"url": url, "content": content, "title": title})
+        if mode == "raw":
+            results = crawled
 
-            if not results:
-                logger.info("Không crawl được nội dung chất lượng từ các URL")
-                return [{"url": "", "content": "Không thể crawl thông tin về RAGASA 2025 do giới hạn truy cập hoặc thiếu nội dung liên quan.", "title": "Không có kết quả"}]
+        elif mode == "rerank":
+            qvec = await embed_text(query)
+            if qvec is None:
+                results = crawled
+            else:
+                scored = []
+                for item in crawled:
+                    vec = await embed_text(item["title"] + " " + item["content"][:500])
+                    if vec is not None:
+                        score = cosine_similarity(qvec, vec)
+                        scored.append((score, item))
+                scored.sort(key=lambda x: x[0], reverse=True)
+                results = [it for _, it in scored[:rerank_top_k]]
 
-            logger.info(f"Số kết quả crawl được: {len(results)}")
-            return results[:3]  # Giới hạn 3 kết quả chất lượng
+        elif mode == "summary":
+            tasks = [summarize_text(item["content"], query) for item in crawled]
+            summaries = await asyncio.gather(*tasks, return_exceptions=True)
+            for item, summ in zip(crawled, summaries):
+                if isinstance(summ, str) and summ.strip():
+                    results.append({
+                        "url": item["url"],
+                        "title": item["title"],
+                        "summary": summ
+                    })
+
+        if results:
+            search_cache.set(query, results)
+
+        return results
+
     except Exception as e:
-        logger.error(f"Lỗi khi tìm kiếm web: {e}")
-        return [{"url": "", "content": "Lỗi khi tìm kiếm thông tin về RAGASA 2025.", "title": "Lỗi tìm kiếm"}]
+        logger.error(f"Lỗi search_web({mode}): {e}")
+        return []

@@ -9,6 +9,7 @@ from PySide6.QtCore import (
     Qt, QPropertyAnimation, QRect, QEasingCurve, QParallelAnimationGroup
 )
 from PySide6.QtGui import QColor
+from send_stop_button import SendStopButton
 
 class UIComponents:
     def __init__(self, parent):
@@ -21,6 +22,7 @@ class UIComponents:
         self.response_display = None
         self.button_widget = None
         self.screenshot_button = None
+        self.send_stop_button = None
         self.preview_widget = None
         self.icon_label = None
         self.name_label = None
@@ -38,7 +40,7 @@ class UIComponents:
         self.parent.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.parent.setAttribute(Qt.WA_TranslucentBackground)
         self.parent.setWindowTitle("4T Assistant")
-        self.parent.setFixedWidth(600)
+        self.parent.setFixedWidth(500)
         # Ẩn window khi mới chạy
         self.parent.hide()
 
@@ -106,7 +108,7 @@ class UIComponents:
         thinking_layout.setContentsMargins(10, 5, 10, 5)
         thinking_layout.setSpacing(5)
 
-        self.toggle_button = QPushButton("Suy luận ▼")
+        self.toggle_button = QPushButton("Suy luận để cho kết quả tốt hơn")
         self.toggle_button.setObjectName("toggleButton")
         self.toggle_button.setFixedHeight(30)
         self.toggle_button.setCursor(Qt.PointingHandCursor)
@@ -150,7 +152,12 @@ class UIComponents:
         self.screenshot_button.clicked.connect(self.parent.on_screenshot_clicked)
         self.screenshot_button.setCursor(Qt.PointingHandCursor)
 
+        self.send_stop_button = SendStopButton(self.parent)  # Thêm nút Send/Stop
+        self.send_stop_button.setObjectName("sendStopButton")
+        self.send_stop_button.setFixedSize(60, 30)
+
         button_layout.addWidget(self.screenshot_button)
+        button_layout.addWidget(self.send_stop_button)
         button_layout.addStretch()
 
         self.parent.layout.addWidget(self.main_container)
@@ -382,7 +389,7 @@ class UIComponents:
 
             self.thinking_animation.addAnimation(max_anim)
             self.thinking_animation.addAnimation(min_anim)
-            self.toggle_button.setText("Suy luận ▲")
+            self.toggle_button.setText("Suy luận để cho kết quả tốt hơn")
 
         # Chỉ gọi adjust_window_height sau khi animation hoàn tất
         self.thinking_animation.finished.connect(lambda: self.adjust_window_height(staged=not is_expanding))

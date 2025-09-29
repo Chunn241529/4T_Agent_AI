@@ -97,7 +97,7 @@ class SpinnerLogic:
             max_length = 50  # Số ký tự tối đa
             if len(one_line_query) > max_length:
                 one_line_query = one_line_query[:max_length - 3] + '...'
-            display_text = f"Đang tìm kiếm: {one_line_query}"
+            display_text = f"Đang tìm kiếm {one_line_query}"
 
         self.parent.ui.scroll_area.setVisible(True)
         scroll_width = max(self.parent.ui.scroll_area.width(), 100)
@@ -179,7 +179,7 @@ class SpinnerLogic:
         """Trigger chuyển sang trạng thái search với query"""
         print(f"Starting search with query: {query}")
         self.parent.toSearch.emit()
-        display_text = f"Đang tìm kiếm '{query}'" if query else "Đang tìm kiếm..."
+        display_text = f"Đang tìm kiếm {query}" if query else "Đang tìm kiếm..."
         self._show_spinner(display_text)
 
     def update_search_text(self, query: str):
@@ -189,7 +189,7 @@ class SpinnerLogic:
             max_length = 50
             if len(one_line_query) > max_length:
                 one_line_query = one_line_query[:max_length - 3] + '...'
-            display_text = f"Đang tìm kiếm: {one_line_query}"
+            display_text = f"Đang tìm kiếm {one_line_query}"
             self.text_label.setText(display_text)
             text_width = self.text_label.fontMetrics().boundingRect(self.text_label.text()).width() + 20
             spinner_width = self.spinner_label.width() if self.spinner_label else 0

@@ -8,7 +8,7 @@ from app.services.get_time import get_current_time_info
 from app.services.session_manager import SessionManager
 
 OLLAMA_API_URL = "http://localhost:11434/api/chat"
-model_check = "4T-S"  # Sử dụng model nhỏ hơn cho routing
+model_check = "4T"  # Sử dụng model nhỏ hơn cho routing
 
 # Keywords cho quick check trước khi dùng LLM
 SEARCH_KEYWORDS = {
@@ -43,7 +43,7 @@ THINKING_TRIGGER_KEYWORDS = {
     'chiến lược', 'kế hoạch', 'giải pháp', 'cải tiến'
 }
 
-# Cache cho kết quả search decision
+# Cache cho kết quả quick search decision
 search_decision_cache: dict = {}
 
 def _quick_search_check(prompt: str) -> Optional[bool]:
@@ -79,40 +79,55 @@ def _quick_search_check(prompt: str) -> Optional[bool]:
     # Các pattern khác cần LLM quyết định
     return None
 
+from app.services.memory_manager import HybridMemory  # import instance global
+memory = HybridMemory()
+
 async def should_search_web(prompt: str) -> bool:
-    # Thử quick check trước
     quick_result = _quick_search_check(prompt)
     if quick_result is not None:
         return quick_result
 
+    # Heuristic: nếu quá ngắn và không có từ khóa nghi vấn → bỏ qua
+    if len(prompt.split()) < 6 and not re.search(r"(ai|gì|bao nhiêu|ở đâu|\?|tìm|search|tin tức)", prompt.lower()):
+        logger.info("Bỏ qua search vì câu ngắn/cảm thán")
+        return False
+
+    # Lấy short context từ memory
+    recent_messages = " ".join(
+        [msg.get("content", "") for msg in memory.short_history if msg["role"] == "user"][-4:]
+    )
+
     current_time = get_current_time_info()
-    system_prompt = f"""
+    full_prompt = f"""
           {current_time}.
-          You are an intelligent routing assistant. Your task is to determine if a user's question requires up-to-date information from the internet to be answered accurately.
-          Respond with only "YES" or "NO" in uppercase, without any other text or explanation.
+          You are an intelligent routing assistant. Your task is to determine if the CURRENT user's question requires up-to-date information from the internet to be answered accurately.
+          Focus primarily on the current user's message. Use the recent context ONLY if the current message is ambiguous or directly refers to it.
+          Respond with only "YES" or "NO".
 
-          Respond "YES" for questions about:
-          - Current events, news, or recent developments (e.g., "who won the football match yesterday?", "what are the latest AI news?")
-          - Real-time external information that cannot be inferred from {current_time} alone (e.g., "what's the weather in Hanoi?", "what is the stock price of Apple right now?")
-          - Specific products, companies, or people where recent information is important (e.g., "what is the latest version of Python?", "tell me about the new Google Gemini model")
-          - Explicit requests for searching, looking up, or retrieving web information (e.g., "search for the best laptops 2025", "find recent articles on climate change", "browse the latest stock prices")
+          This is the CURRENT user's message:
+          {prompt}
 
-          Respond "NO" for questions about:
-          - General knowledge that is timeless (e.g., "what is the capital of France?")
-          - Creative writing tasks (e.g., "write a poem about the sea")
-          - Simple conversational phrases (e.g., "hello", "how are you?")
-          - Mathematical calculations (e.g., "what is 2+2?")
-          - Questions about the current local time or date (e.g., "what time is it now?", "today's date")
+          Recent context (for reference only if needed):
+          {recent_messages if recent_messages else 'No recent context.'}
 
-          If unsure, lean towards "YES" if the question implies a desire for external search or fresh data; otherwise, "NO".
+          Respond "YES" for:
+          - Questions explicitly asking for news, current events, updates, prices, weather, disasters, etc. in the CURRENT message.
+          - Real-time information requests in the CURRENT message.
+
+          Respond "NO" for:
+          - General knowledge
+          - Creative writing
+          - Casual conversation
+          - Exclamations, reactions, or comments (e.g., "oh no", "that's sad").
+          - If the CURRENT message does not explicitly need up-to-date info, even if past context did.
     """
+
     try:
         session = await SessionManager.get_session()
         payload = {
             "model": model_check,
             "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": full_prompt}
             ],
             "stream": False,
             "options": {"num_keep": 0, "num_predict": 20, "temperature": 0.2}
@@ -124,12 +139,12 @@ async def should_search_web(prompt: str) -> bool:
             data = await response.json()
             decision = data['message']['content'].strip().upper()
             logger.info(f"Quyết định tìm kiếm web: {decision}")
-            # Cache kết quả
-            search_decision_cache[prompt.lower()] = (decision == "YES")
+            # Không cache decision từ LLM vì phụ thuộc vào context động
             return decision == "YES"
     except Exception as e:
         logger.error(f"Lỗi khi xác định tìm kiếm web: {e}")
         return False
+
 
 async def should_thinking(messages_for_llm: list) -> bool:
     """
@@ -176,7 +191,7 @@ async def should_thinking(messages_for_llm: list) -> bool:
 
 async def generate_search_query(prompt: str) -> str:
     time_ = get_current_time_info()
-    system_prompt = f"""
+    _prompt = f"""
         {time_}.
         Based on the user's request and provided context, rewrite it into a concise, effective English search query.
 
@@ -187,7 +202,7 @@ async def generate_search_query(prompt: str) -> str:
         - If the request is vague (e.g., "search for me"), use the given context to infer the actual intent.
         - Optimize phrasing for reliable sources (e.g., VnExpress, Reuters, Bloomberg).
         - Avoid vague or unrelated terms.
-        - Output only the search query.
+        - Output only the search query. NO Title.
     """
 
 
@@ -196,10 +211,10 @@ async def generate_search_query(prompt: str) -> str:
         payload = {
             "model": "4T",
             "messages": [
-                {"role": "user", "content": system_prompt}
+                {"role": "user", "content": _prompt}
             ],
             "stream": False,
-            "options": {"num_keep": 0, "num_predict": 1500, "temperature": 0.2}
+            "options": {"num_predict": 1500, "temperature": 0.001}
         }
         async with session.post(OLLAMA_API_URL, json=payload) as response:
             if response.status != 200:
