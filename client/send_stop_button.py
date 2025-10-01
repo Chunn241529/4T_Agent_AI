@@ -1,3 +1,4 @@
+# send_stop_button.py
 from PySide6.QtWidgets import QPushButton
 from PySide6.QtCore import Signal, Qt
 
@@ -9,7 +10,7 @@ class SendStopButton(QPushButton):
         super().__init__(parent)
         self.is_running = False
         self.setObjectName("sendStopButton")
-        self.setFixedSize(30, 30)  # Kích thước tròn
+        self.setFixedSize(30, 30)  # Kích thước vuông
         self.setCursor(Qt.PointingHandCursor)
         self.update_state()
 
@@ -21,10 +22,12 @@ class SendStopButton(QPushButton):
                 #sendStopButton {
                     background-color: #f44336;
                     border: 1px solid #505050;
-                    border-radius: 15px;
+                    border-radius: 9px;
                     color: #e0e0e0;
                     font-size: 14px;
                     text-align: center;
+                    line-height: 30px;
+                    padding: 0;
                 }
                 #sendStopButton:hover {
                     background-color: #d32f2f;
@@ -44,6 +47,8 @@ class SendStopButton(QPushButton):
                     color: #e0e0e0;
                     font-size: 14px;
                     text-align: center;
+                    line-height: 30px;
+                    padding: 0;
                 }
                 #sendStopButton:hover {
                     background-color: #3a8cd7;
