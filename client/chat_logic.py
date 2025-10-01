@@ -58,6 +58,7 @@ class ChatLogic:
         self.parent.spinner_logic.start_thinking()
         self.parent.ui.send_stop_button.set_running(True)
 
+
         image_base64 = self.parent.current_screenshot_base64
 
         if self.ollama_thread:

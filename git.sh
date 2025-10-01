@@ -22,6 +22,47 @@ check_commit() {
   git log -1 --pretty=format:"%h - %s (%ci) [tác giả: %an]"
 }
 
+check_out() {
+  # Nếu có tham số thì checkout luôn
+  if [ -n "$2" ]; then
+    target_branch="$2"
+  else
+    # Nếu không có tham số thì hiện menu chọn nhánh
+    branches=($(git branch --format="%(refname:short)"))
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+    echo "🌿 Danh sách branch local:"
+    for i in "${!branches[@]}"; do
+      if [ "${branches[$i]}" == "$current_branch" ]; then
+        echo "$((i+1))) ${branches[$i]} (hiện tại)"
+      else
+        echo "$((i+1))) ${branches[$i]}"
+      fi
+    done
+
+    echo "🔀 Nhập số branch muốn checkout (hoặc nhập tên branch mới):"
+    read selected
+
+    if [[ -z "$selected" ]]; then
+      echo "⚠️ Bạn chưa chọn branch nào."
+      exit 1
+    elif [[ "$selected" =~ ^[0-9]+$ ]] && [ "$selected" -le "${#branches[@]}" ]; then
+      target_branch=${branches[$((selected-1))]}
+    else
+      target_branch=$selected
+    fi
+  fi
+
+  # Checkout hoặc tạo mới
+  if git show-ref --verify --quiet "refs/heads/$target_branch"; then
+    echo "✅ Chuyển sang branch '$target_branch'."
+    git checkout "$target_branch"
+  else
+    echo "🌱 Branch '$target_branch' chưa có. Tạo mới..."
+    git checkout -b "$target_branch"
+  fi
+}
+
 push_code() {
   check_git_config
 
@@ -142,6 +183,9 @@ case "$1" in
   check_commit)
     check_commit
     ;;
+  check_out)
+    check_out "$@"
+    ;;
   push)
     push_code "$@"
     ;;
@@ -152,6 +196,7 @@ case "$1" in
     echo "⚙️ Cách dùng:"
     echo "  ./git.sh check_branch        # Hiện branch hiện tại và danh sách branch"
     echo "  ./git.sh check_commit        # Hiện commit gần nhất"
+    echo "  ./git.sh check_out [branch]  # Checkout branch (nếu chưa có thì tạo mới)"
     echo "  ./git.sh push \"msg\"          # Commit & push với message"
     echo "  ./git.sh merge_to [branch]   # Merge branch hiện tại vào branch đích (mặc định main)"
     ;;

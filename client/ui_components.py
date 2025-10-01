@@ -6,11 +6,12 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect
 )
 from PySide6.QtCore import (
-    Qt, QPropertyAnimation, QRect, QEasingCurve, QParallelAnimationGroup, QTimer
+    Qt, QPropertyAnimation, QRect, QEasingCurve, QParallelAnimationGroup
 )
 from PySide6.QtGui import QColor
 from send_stop_button import SendStopButton
 from minimize_button import MinimizeButton
+import time
 
 class UIComponents:
     def __init__(self, parent):
@@ -24,12 +25,12 @@ class UIComponents:
         self.button_widget = None
         self.screenshot_button = None
         self.send_stop_button = None
-        self.minimize_button = None  # Thêm nút minimize
+        self.minimize_button = None
         self.preview_widget = None
         self.icon_label = None
         self.name_label = None
         self.size_label = None
-        self.delete_button = None  # Thêm nút xóa
+        self.delete_button = None
         self.thinking_widget = None
         self.thinking_display = None
         self.toggle_button = None
@@ -38,14 +39,12 @@ class UIComponents:
         self.height_animation = None
         self.input_box_animation_group = None
         self.thinking_animation = None
-        self.toggle_arrow_anim = None
 
     def setup_ui(self):
         self.parent.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.parent.setAttribute(Qt.WA_TranslucentBackground)
         self.parent.setWindowTitle("4T Assistant")
-        self.parent.setFixedWidth(500)
-        # Ẩn window khi mới chạy
+        self.parent.setFixedWidth(600)
         self.parent.hide()
 
         self.parent.layout = QVBoxLayout(self.parent)
@@ -93,7 +92,6 @@ class UIComponents:
 
         preview_layout.addStretch()
 
-        # Thêm nút xóa ở bên phải
         self.delete_button = QPushButton("✕")
         self.delete_button.setObjectName("deleteButton")
         self.delete_button.setFixedSize(20, 20)
@@ -114,14 +112,13 @@ class UIComponents:
         self.adjust_input_box_height()
         frame_layout.addWidget(self.input_box)
 
-        # Thêm thinking_widget dưới input_box
         self.thinking_widget = QWidget(self.main_frame)
         self.thinking_widget.setObjectName("thinkingWidget")
         thinking_layout = QVBoxLayout(self.thinking_widget)
         thinking_layout.setContentsMargins(10, 5, 10, 5)
         thinking_layout.setSpacing(5)
 
-        self.toggle_button = QPushButton("Suy luận để cho kết quả tốt hơn ▼")
+        self.toggle_button = QPushButton("Suy luận ▼")
         self.toggle_button.setObjectName("toggleButton")
         self.toggle_button.setFixedHeight(30)
         self.toggle_button.setCursor(Qt.PointingHandCursor)
@@ -132,7 +129,7 @@ class UIComponents:
         self.thinking_display.setObjectName("thinkingDisplay")
         self.thinking_display.setOpenExternalLinks(True)
         self.thinking_display.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.thinking_display.setFixedHeight(0)  # Ban đầu ẩn
+        self.thinking_display.setFixedHeight(0)
         thinking_layout.addWidget(self.thinking_display)
 
         frame_layout.addWidget(self.thinking_widget)
@@ -149,7 +146,6 @@ class UIComponents:
         self.response_display.setObjectName("responseDisplay")
         self.response_display.setOpenExternalLinks(True)
         self.scroll_area.setWidget(self.response_display)
-        # Hiển thị text mặc định
         self.response_display.setText("Bạn cần mình giúp gì không?")
 
         frame_layout.addWidget(self.scroll_area)
@@ -173,9 +169,8 @@ class UIComponents:
         self.send_stop_button.set_running(False)
         button_layout.addWidget(self.send_stop_button)
 
-        button_layout.addStretch()  # Spacer để đẩy minimize sang phải
+        button_layout.addStretch()
 
-        # Thêm nút minimize
         self.minimize_button = MinimizeButton(self.button_widget)
         self.minimize_button.minimize_clicked.connect(self.parent.minimize_to_tray)
         button_layout.addWidget(self.minimize_button)
@@ -188,42 +183,88 @@ class UIComponents:
         self.apply_stylesheet()
 
     def apply_stylesheet(self):
-        """Áp dụng stylesheet cho toàn bộ UI"""
         stylesheet = """
         #mainContainer {
-            background-color: #1c1c1e;
-            border-radius: 15px;
+            background-color: transparent;
         }
         #mainFrame {
-            background-color: #1c1c1e;
-            border-radius: 15px;
+            background-color: rgba(28, 29, 35, 0.85);
+            border: 1px solid #505050;
+            border-radius: 20px;
         }
-        #inputBox {
-            background-color: #2c2c2e;
+        #previewWidget {
+            background-color: rgba(28, 29, 35, 0.85);
+            border: 1px solid #505050;
+            border-radius: 9px;
+        }
+        #previewWidget:hover {
+            background-color: #3a3b45;
+            border: 1px solid #61afef;
+        }
+        #thinkingWidget {
+              background-color: transparent;
+              border-radius: 9px;
+              max-height: 40px;
+              transition: max-height 0.2s ease-in-out;
+        }
+        #thinkingWidget.expanded {
+            max-height: 250px;
+        }
+        #thinkingWidget:hover {
+            background-color: transparent;
+            border: 1px solid #61afef;
+        }
+        #toggleButton {
+            background-color: transparent;
             border: none;
-            border-radius: 10px;
-            padding: 10px;
             color: #e0e0e0;
             font-size: 14px;
-            font-family: 'Segoe UI', sans-serif;
+            text-align: left;
+            padding: 5px;
+        }
+        #toggleButton:hover {
+            background-color: transparent;
+        }
+        #toggleButton:pressed {
+            background-color: transparent;
+        }
+        #thinkingDisplay {
+            background-color: #2c2d35;
+            border: none;
+            color: #e0e0e0;
+            font-size: 14px;
+        }
+        #thinkingDisplay a {
+            color: #61afef;
+            text-decoration: none;
+        }
+        #thinkingDisplay a:hover {
+            text-decoration: underline;
+        }
+        #inputBox {
+            background-color: #2c2d35;
+            border: 1px solid #505050;
+            border-radius: 10px;
+            color: #e0e0e0;
+            font-size: 14px;
+            padding: 10px;
         }
         #inputBox:focus {
-            background-color: #2c2c2e;
+            background-color: #2c2d35;
             border: 2px solid #61afef;
         }
         #inputBox::placeholder {
             color: #a0a0a0;
         }
-        #scrollArea {
-            background-color: transparent;
+        #scrollArea, #scrollArea > QWidget > QWidget {
             border: none;
+            background: transparent;
         }
         #responseDisplay {
             background-color: transparent;
             color: #e0e0e0;
             font-size: 14px;
-            font-family: 'Segoe UI', sans-serif;
-            padding: 0;
+            border: none;
         }
         #responseDisplay a {
             color: #61afef;
@@ -232,34 +273,45 @@ class UIComponents:
         #responseDisplay a:hover {
             text-decoration: underline;
         }
-        #thinkingWidget {
-            background-color: #2c2c2e;
-            border-radius: 10px;
-            border-left: 3px solid #61afef;
+        #responseDisplay table {
+            border-collapse: collapse;
+            margin: 1em 0;
+            width: 100%;
+            border: 1px solid #705050;
         }
-        #toggleButton {
-            background-color: transparent;
-            border: none;
-            color: #e0e0e0;
-            font-size: 12px;
+        #responseDisplay th, #responseDisplay td {
+            border: 1px solid #705050;
+            padding: 8px;
             text-align: left;
-            padding: 5px 0;
         }
-        #toggleButton:hover {
-            color: #61afef;
-        }
-        #thinkingDisplay {
-            background-color: transparent;
+        #responseDisplay th {
+            background-color: #3a3b45;
             color: #e0e0e0;
-            font-size: 12px;
-            font-family: 'Segoe UI', sans-serif;
-            border: none;
-            padding: 0;
+            font-weight: bold;
         }
-        #thinkingDisplay a {
-            color: #61afef;
-            text-decoration: none;
+        #responseDisplay td {
+            background-color: #2c2d35;
         }
+        .codehilite {
+            background: #2c2d35;
+            border-radius: 5px;
+            padding: 10px;
+            font-size: 13px;
+            margin: 1em 0;
+        }
+        .codehilite pre {
+            margin: 0;
+            white-space: pre-wrap;
+        }
+        .codehilite .k { color: #c678dd; }
+        .codehilite .s2 { color: #98c379; }
+        .codehilite .nf { color: #61afef; }
+        .codehilite .mi { color: #d19a66; }
+        .codehilite .n { color: #abb2bf; }
+        .codehilite .p { color: #abb2bf; }
+        .codehilite .o { color: #56b6c2; }
+        .codehilite .nb { color: #d19a66; }
+        .codehilite .c1 { color: #7f848e; font-style: italic; }
         #screenshotButton {
             background-color: rgba(28, 29, 35, 0.85);
             border: 1px solid #505050;
@@ -268,13 +320,11 @@ class UIComponents:
             font-size: 14px;
         }
         #screenshotButton:hover {
-            background-color: #3a8cd7;
+            background-color: #3a3b45;
             border: 1px solid #61afef;
         }
-        #previewWidget {
-            background-color: #2c2c2e;
-            border-radius: 10px;
-            border-left: 3px solid #4CAF50;
+        #screenshotButton:pressed {
+            background-color: #1a1b25;
         }
         #deleteButton {
             background-color: #f44336;
@@ -289,6 +339,9 @@ class UIComponents:
         }
         #deleteButton:hover {
             background-color: #d32f2f;
+        }
+        QScrollBar:vertical {
+            width: 0px;
         }
         """
         self.parent.setStyleSheet(stylesheet)
@@ -310,9 +363,9 @@ class UIComponents:
             event.accept()
 
     def delete_screenshot(self):
-        """Xóa preview ảnh và đặt lại current_screenshot_base64"""
         self.preview_widget.hide()
         self.parent.current_screenshot_base64 = None
+        self.icon_label.clear()
         self.parent.adjust_window_height()
 
     def toggle_thinking(self, show_full_content=False):
@@ -320,7 +373,6 @@ class UIComponents:
             self.thinking_animation.stop()
 
         self.thinking_animation = QParallelAnimationGroup(self.parent)
-
         current_height = self.parent.height()
         is_expanding = self.thinking_display.height() == 0
 
@@ -348,8 +400,7 @@ class UIComponents:
 
             self.thinking_animation.addAnimation(max_anim)
             self.thinking_animation.addAnimation(min_anim)
-            self.toggle_button.setText("Suy luận để cho kết quả tốt hơn ▼")
-            self._animate_arrow(0)
+            self.toggle_button.setText("Suy luận ▼")
         else:
             # Hiển thị thinking_display
             doc_height = self.thinking_display.document().size().toSize().height()
@@ -370,20 +421,11 @@ class UIComponents:
 
             self.thinking_animation.addAnimation(max_anim)
             self.thinking_animation.addAnimation(min_anim)
-            self.toggle_button.setText("Suy luận ▲")
-            self._animate_arrow(180)
+            self.toggle_button.setText("Suy luận để cho kết quả tốt hơn")
 
         # Chỉ gọi adjust_window_height sau khi animation hoàn tất
         self.thinking_animation.finished.connect(lambda: self.adjust_window_height(staged=not is_expanding))
         self.thinking_animation.start()
-
-    def _animate_arrow(self, end_angle):
-        """Animate rotate cho arrow icon bằng cách thay đổi text với transition mượt"""
-        # Để đơn giản, chỉ thay đổi text arrow; rotate thực tế cần QGraphicsRotation nhưng giữ minimal
-        if self.toggle_arrow_anim:
-            self.toggle_arrow_anim.stop()
-        # Sử dụng short timer để simulate transition
-        QTimer.singleShot(50, lambda: self.toggle_button.update())  # Force repaint cho mượt
 
     def adjust_input_box_height(self):
         min_height = 80
@@ -430,19 +472,16 @@ class UIComponents:
         spacing = self.main_frame.layout().spacing()
         response_padding = 20
 
-        # Calculate thinking widget height based on state
         thinking_height = 0
         if self.thinking_widget.isVisible():
             if self.thinking_display.height() > 0:
-                thinking_height = 40 + self.thinking_display.height() # Toggle + content height
+                thinking_height = 40 + self.thinking_display.height()
             else:
-                thinking_height = 40 # Just toggle height
+                thinking_height = 40
 
         if staged:
-            # Keep current height during response
             target_height = self.parent.height()
         else:
-            # Adjust to full height when complete
             target_height = int(input_height + doc_height + preview_height + thinking_height + button_height + container_margin + frame_margin + spacing * 3 + response_padding)
 
         final_height = min(target_height, self.parent.MAX_HEIGHT)
@@ -454,7 +493,7 @@ class UIComponents:
                 self.height_animation.stop()
 
             self.height_animation = QPropertyAnimation(self.parent, b"geometry")
-            self.height_animation.setDuration(200)
+            self.height_animation.setDuration(150)
             self.height_animation.setEasingCurve(QEasingCurve.InOutQuad)
 
             current_geometry = self.parent.geometry()
