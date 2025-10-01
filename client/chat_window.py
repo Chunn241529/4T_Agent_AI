@@ -1,6 +1,6 @@
 # chat_window.py
 # -*- coding: utf-8 -*-
-from PySide6.QtWidgets import QWidget, QVBoxLayout
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QApplication
 from PySide6.QtCore import Qt, QPoint, Signal
 from PySide6.QtGui import QTextCursor, QPixmap
 from ui_components import UIComponents
@@ -27,6 +27,7 @@ class ChatWindow(QWidget):
         self.last_scroll_value = 0
         self.sources_data = []
         self.current_screenshot_base64 = None
+        self.tray_manager = None  # Thêm attribute để access tray
 
         self.ui = UIComponents(self)
         self.chat_logic = ChatLogic(self)
@@ -34,9 +35,25 @@ class ChatWindow(QWidget):
 
         self.init_ui()
 
+    def center_and_show(self):
+        """Hiển thị window ở giữa màn hình"""
+        screen = QApplication.primaryScreen().geometry()
+        window_width = self.width()
+        window_height = self.height()
+        center_x = (screen.width() - window_width) // 2
+        center_y = (screen.height() - window_height) // 2
+        self.move(center_x, center_y)
+        self.show()
+
     def init_ui(self):
         self.ui.setup_ui()
         self.chat_logic.setup_connections()
+
+    def minimize_to_tray(self):
+        """Thu nhỏ window về tray với notification"""
+        self.hide()
+        if self.tray_manager:
+            self.tray_manager.show_message("4T Assistant", "Đã thu nhỏ. Click icon để mở lại.", duration=2000)
 
     def focusInEvent(self, event):
         self._is_stable = True

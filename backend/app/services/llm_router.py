@@ -1,18 +1,21 @@
+# app/services/llm_router.py
 import re
 import base64
 import json
 from typing import Optional, Set, List
+
+import httpx
 from app.utils.logger import logger
 from app.services.get_time import get_current_time_info
 from app.services.session_manager import SessionManager
 from app.services.memory_manager import HybridMemory
 
 OLLAMA_API_URL = "http://localhost:11434/api/chat"
-model_check = "4T-Base"  # Sử dụng model nhỏ hơn cho routing
+model_check = "gemma3:12b-it-q4_K_M"  # Fallback sang model chính nếu 4T-Base không tồn tại
 
 # Từ khóa cho tìm kiếm web
 SEARCH_KEYWORDS = {
-    'search', 'tìm', 'tra', 'lookup', 'find',
+    'search', 'tìm', 'tra', 'lookup', 'find', 'tìm kiếm', 'tra cứu', 'tìm hiểu',
     'tin tức', 'news', 'mới nhất', 'latest',
     'giá', 'price', 'bao nhiêu', 'how much',
     'hiện tại', 'now', 'current', 'hôm nay', 'today',
@@ -192,7 +195,7 @@ async def generate_search_query(prompt: str) -> str:
                 {"role": "user", "content": _prompt}
             ],
             "stream": False,
-            "options": {"num_predict": 500, "temperature": 0.001}
+            "options": {"num_predict": 500, "temperature": 0.1}
         }
         async with session.post(OLLAMA_API_URL, json=payload) as response:
             response.raise_for_status()
@@ -200,9 +203,15 @@ async def generate_search_query(prompt: str) -> str:
             query = data['message']['content'].strip()
             logger.info(f"Truy vấn tìm kiếm được tạo: {query}")
             return query
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            logger.warning(f"Model {model_check} không tồn tại (404), fallback query gốc")
+        else:
+            logger.error(f"Lỗi HTTP khi tạo truy vấn tìm kiếm: {e}")
+        return prompt  # Fallback query gốc nếu lỗi API
     except Exception as e:
         logger.error(f"Lỗi khi tạo truy vấn tìm kiếm: {e}")
-        return f"{prompt}"  # Fallback query
+        return prompt  # Fallback query gốc
 
 def decode_base64_image(base64_string: str):
     """Giải mã chuỗi base64 thành bytes"""

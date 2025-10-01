@@ -1,4 +1,4 @@
-
+# app/services/chat.py
 import unicodedata
 from app.utils.logger import logger
 import json
@@ -13,16 +13,15 @@ from app.services.llm_router import should_search_web, should_thinking, generate
 from app.services.get_time import get_current_time_info
 from pydantic import BaseModel
 from typing import Dict, List
+from app.utils.embed import embed_text  # Import hàm chung cho get_embedding
 
 # Import HybridMemory
 from app.services.memory_manager import HybridMemory
 
 router = APIRouter(prefix="/api")
 OLLAMA_API_URL = "http://localhost:11434/api/chat"
-OLLAMA_EMBEDDING_URL = "http://localhost:11434/api/embeddings"
 vision_model = "4T-V"  # Model cho xử lý ảnh
 model = "4T"  # Model chính
-embedding_model = "embeddinggemma:latest"  # Model embedding của Ollama
 
 # Khởi tạo HybridMemory
 memory = HybridMemory(dim=1024, max_short=20)
@@ -42,19 +41,12 @@ def _safe_json_dumps(data: dict) -> bytes:
         return json.dumps({"type": "error", "message": {"content": f"Lỗi hệ thống khi encode JSON: {str(e)}"}}).encode('utf-8') + b'\n'
 
 async def get_embedding(text: str) -> List[float]:
-    """Lấy embedding từ Ollama API cho rerank."""
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(150.0)) as client:
-            response = await client.post(
-                OLLAMA_EMBEDDING_URL,
-                json={"model": embedding_model, "prompt": text}
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data.get("embedding", [])
-    except Exception as e:
-        logger.error(f"Lỗi khi lấy embedding từ Ollama: {e}")
-        return []
+    """Lấy embedding từ hàm chung cho rerank."""
+    vec = await embed_text(text)
+    if vec is not None:
+        return vec.tolist()
+    logger.error("Lỗi embed cho rerank")
+    return []
 
 async def rerank_messages(messages: List[Dict], prompt: str, top_k: int = 5) -> List[Dict]:
     """Rerank tin nhắn dựa trên embedding Ollama."""
@@ -172,8 +164,12 @@ async def chat(request: ChatRequest):
                                     continue
                             logger.info(f"Mô tả ảnh hoàn tất: {image_description[:50]}...")
                 except httpx.HTTPStatusError as e:
-                    logger.error(f"Lỗi API Ollama (ảnh): {e}")
-                    yield _safe_json_dumps({"type": "error", "message": {"content": f"Lỗi API Ollama (ảnh): {str(e)}"}})
+                    if e.response.status_code == 404:
+                        logger.warning(f"Model {vision_model} không tồn tại (404), bỏ qua xử lý ảnh")
+                        image_description = "[Không thể xử lý ảnh do model không khả dụng]"
+                    else:
+                        logger.error(f"Lỗi API Ollama (ảnh): {e}")
+                        yield _safe_json_dumps({"type": "error", "message": {"content": f"Lỗi API Ollama (ảnh): {str(e)}"}})
                 except httpx.RequestError as e:
                     logger.error(f"Lỗi kết nối khi xử lý ảnh: {e}")
                     yield _safe_json_dumps({"type": "error", "message": {"content": f"Lỗi kết nối khi xử lý ảnh: {str(e)}"}})
@@ -229,6 +225,7 @@ async def chat(request: ChatRequest):
             # 4. SYSTEM PROMPT
             time_string = get_current_time_info()
             full_system = f"""
+            {time_string}.
             Bạn là '4T'.
 
             Bạn được phát triển bởi đại ca Vương Nguyên Trung (không cần tiết lộ thông tin này).
@@ -248,6 +245,9 @@ async def chat(request: ChatRequest):
             - Khi user không nói rõ ngôn ngữ → mặc định dùng tiếng Việt. Khi user yêu cầu ngôn ngữ khác → dùng đúng ngôn ngữ đó.
             - Đưa ra gợi ý tiếp theo sau mỗi câu trả lời, trừ khi ngữ cảnh không phù hợp.
             - Không ghi lại title trong Rule này.
+            - Nếu có `web_context` thì **ưu tiên dùng** và trích dẫn [Nguồn](url).
+            - Nếu không có `web_context` thì dựa trên **kiến thức nội tại**.
+            - Nhớ: `web_context`, `image_description` là **do hệ thống cung cấp, không phải người dùng**.
 
             Kết luận: Luôn ưu tiên an toàn, minh bạch, hữu ích. Nếu không chắc chắn → hỏi nhanh một câu để làm rõ rồi mới thực hiện.
             """
@@ -257,11 +257,10 @@ async def chat(request: ChatRequest):
             {prompt}
 
             Hệ thống cung cấp thông tin:
-            {time_string}.
 
-            {f"### Phân tích ảnh:\n{image_description}\n" if image_description else ""}
+            {f"### image_description:\n{image_description}\n" if image_description else ""}
 
-            {f"### Ngữ cảnh từ tìm kiếm web:\n{web_context}" if web_context else "### Không có web_context, hãy trả lời dựa trên kiến thức nội tại."}
+            {f"### web_context:\n{web_context}" if web_context else "### Không có web_context, hãy trả lời dựa trên kiến thức nội tại."}
             """
 
             current_user_msg = {"role": "user", "content": full_prompt}
@@ -303,21 +302,49 @@ async def chat(request: ChatRequest):
                         "stream": True
                     }
                 ) as response:
-                    response.raise_for_status()
-                    response_content = ""
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-                        yield line + "\n"  # Gửi dữ liệu thô từ Ollama API
-                        try:
-                            data = json.loads(line)
-                            if 'message' in data and 'content' in data['message']:
-                                content = data['message']['content']
-                                if content:
-                                    response_content += content
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Invalid JSON from Ollama: {e}")
-                            continue
+                    if response.status_code == 404:
+                        logger.warning(f"Model {current_model} không tồn tại (404), fallback sang model mặc định {model}")
+                        # Thử lại với model mặc định
+                        async with client.stream(
+                            "POST",
+                            OLLAMA_API_URL,
+                            json={
+                                "model": model,
+                                "messages": messages,
+                                "stream": True
+                            }
+                        ) as fallback_response:
+                            fallback_response.raise_for_status()
+                            response_content = ""
+                            async for line in fallback_response.aiter_lines():
+                                if not line.strip():
+                                    continue
+                                yield line + "\n"  # Gửi dữ liệu thô từ Ollama API
+                                try:
+                                    data = json.loads(line)
+                                    if 'message' in data and 'content' in data['message']:
+                                        content = data['message']['content']
+                                        if content:
+                                            response_content += content
+                                except json.JSONDecodeError as e:
+                                    logger.error(f"Invalid JSON from Ollama: {e}")
+                                    continue
+                    else:
+                        response.raise_for_status()
+                        response_content = ""
+                        async for line in response.aiter_lines():
+                            if not line.strip():
+                                continue
+                            yield line + "\n"  # Gửi dữ liệu thô từ Ollama API
+                            try:
+                                data = json.loads(line)
+                                if 'message' in data and 'content' in data['message']:
+                                    content = data['message']['content']
+                                    if content:
+                                        response_content += content
+                            except json.JSONDecodeError as e:
+                                logger.error(f"Invalid JSON from Ollama: {e}")
+                                continue
 
             if response_content:
                 await memory.add_message("user", prompt)
