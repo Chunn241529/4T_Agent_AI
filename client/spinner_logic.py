@@ -61,7 +61,7 @@ class SpinnerLogic:
         # Thinking: Hiển thị spinner + "Đang suy nghĩ..."
         def enter_thinking():
             print("Entered thinking state")
-            self._show_spinner("Đang suy nghĩ...")
+            self._show_spinner("Chờ trong giây lát...")
             if self.spinner_timer and not self.spinner_timer.isActive():
                 self.spinner_timer.start()
                 print("Spinner timer started in thinking state")

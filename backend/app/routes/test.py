@@ -26,7 +26,7 @@ async def stream_ollama_chat(messages: List[dict]):
                 "POST",
                 OLLAMA_API_URL,
                 json={
-                    "model": "gpt-oss:20b",
+                    "model": "kimi-k2:1t-cloud",
                     "messages": messages,
                     "stream": True
                 }
@@ -54,7 +54,7 @@ async def stream_ollama_chat(messages: List[dict]):
 async def chat(request: ChatRequest):
     try:
         # Tạo messages array từ content
-        messages = [{"role": "user", "content": request.content}]
+        messages = [{"role": "system", "content": "bạn là '4T', là một AI assistant toàn diện."},{"role": "user", "content": request.content}]
         return StreamingResponse(
             stream_ollama_chat(messages),
             media_type="application/json"

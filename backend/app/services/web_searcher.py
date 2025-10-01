@@ -64,7 +64,7 @@ async def fallback_search(query: str, max_results: int = 10) -> List[str]:
 
 async def search_web(
     query: str,
-    max_results: int = 10,
+    max_results: int = 5,
     mode: Literal["raw", "rerank", "summary"] = "rerank",
     rerank_top_k: int = 5,
 ) -> List[Dict]:
