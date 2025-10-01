@@ -25,14 +25,14 @@ class TrayIconManager:
         icon = self._create_icon()
         self.tray_icon = QSystemTrayIcon(icon, self.app)
         self.tray_icon.setToolTip("Trợ lý AI 4T")
-        
+
         menu = QMenu()
         show_action = QAction("Hỏi 4T", self.app)
         quit_action = QAction("Thoát", self.app)
-        
-        show_action.triggered.connect(self.chat_window.show)
+
+        show_action.triggered.connect(self.chat_window.center_and_show)
         quit_action.triggered.connect(self.app.quit)
-        
+
         menu.addAction(show_action)
         menu.addAction(quit_action)
         self.tray_icon.setContextMenu(menu)

@@ -1,7 +1,8 @@
 # screenshot_capture.py
 from PySide6.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QPushButton, QHBoxLayout
-from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QScreen
+from PySide6.QtGui import QPixmap, QPainter, QPen, QColor
 from PySide6.QtCore import Qt, QRect, QPoint, Signal, QByteArray, QBuffer, QIODevice
+
 
 class ScreenshotOverlay(QWidget):
     screenshot_captured = Signal(QPixmap)  # Signal phát ra khi có screenshot
@@ -9,6 +10,7 @@ class ScreenshotOverlay(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # overlay fullscreen
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setStyleSheet("background-color: rgba(0, 0, 0, 0.3);")
@@ -24,15 +26,21 @@ class ScreenshotOverlay(QWidget):
         self.end_pos = None
         self.drawing = False
         self.selection_rect = QRect()
+        self._pending_pixmap = None  # lưu ảnh tạm khi đã chọn vùng, chờ xác nhận
 
-        # Tạo preview widget
-        self.preview_widget = QWidget()
-        self.preview_widget.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        # Tạo preview widget (cửa sổ riêng biệt -> tránh overlay chặn event)
+        self.preview_widget = QWidget(None)  # None = top-level window
+        self.preview_widget.setWindowFlags(
+            Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.Tool
+        )
         self.preview_widget.setAttribute(Qt.WA_TranslucentBackground)
-        self.preview_widget.setStyleSheet("background-color: rgba(0, 0, 0, 0.8); border-radius: 10px;")
+        self.preview_widget.setStyleSheet("background-color: rgba(0, 0, 0, 0.85); border-radius: 10px;")
         self.preview_widget.setFixedSize(200, 150)
 
         preview_layout = QVBoxLayout(self.preview_widget)
+        preview_layout.setContentsMargins(8, 8, 8, 8)
         self.preview_label = QLabel()
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setStyleSheet("color: white; font-size: 12px;")
@@ -81,7 +89,9 @@ class ScreenshotOverlay(QWidget):
         screen = QApplication.primaryScreen()
         if screen:
             self.setGeometry(screen.geometry())
+        # ẩn preview khi overlay vừa hiện
         self.preview_widget.hide()
+        self._pending_pixmap = None
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -93,7 +103,6 @@ class ScreenshotOverlay(QWidget):
 
         # Nếu đang chọn vùng, vẽ vùng chọn
         if not self.selection_rect.isNull():
-            # Vẽ vùng chọn với viền trắng
             painter.setPen(QPen(Qt.white, 2))
             painter.setBrush(QColor(255, 255, 255, 30))
             painter.drawRect(self.selection_rect)
@@ -120,16 +129,21 @@ class ScreenshotOverlay(QWidget):
         if event.button() == Qt.LeftButton and self.drawing:
             self.drawing = False
             if not self.selection_rect.isNull() and self.selection_rect.width() > 10 and self.selection_rect.height() > 10:
-                # Hiển thị preview widget
                 self.show_preview()
             else:
                 self.selection_rect = QRect()
                 self.update()
 
     def show_preview(self):
+        """
+        Cắt ảnh từ vùng chọn, lưu tạm vào self._pending_pixmap
+        Hiển thị preview_widget để người dùng xác nhận/hủy
+        """
         if not self.selection_rect.isNull():
             # Cắt ảnh từ vùng chọn
             cropped_pixmap = self.full_screenshot.copy(self.selection_rect)
+            # Lưu tạm để confirm dùng sau
+            self._pending_pixmap = cropped_pixmap
 
             # Scale ảnh để hiển thị trong preview (giữ tỷ lệ)
             scaled_pixmap = cropped_pixmap.scaled(180, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -144,26 +158,32 @@ class ScreenshotOverlay(QWidget):
             preview_y = screen_geo.bottom() - 170
             self.preview_widget.move(preview_x, preview_y)
             self.preview_widget.show()
+            # đảm bảo preview thực sự ở trên cùng và có thể nhận event
+            self.preview_widget.raise_()
+            self.preview_widget.activateWindow()
 
-            # Ẩn vùng chọn
+            # Ẩn vùng chọn (vẽ vùng chọn xong rồi) - nhưng ảnh đã được lưu trong _pending_pixmap
             self.selection_rect = QRect()
             self.update()
 
     def confirm_selection(self):
-        if not self.selection_rect.isNull():
-            # Cắt ảnh từ vùng chọn
-            cropped_pixmap = self.full_screenshot.copy(self.selection_rect)
-
-            # Ẩn các widget
+        """
+        Khi người dùng bấm Xác nhận: emit ảnh đã lưu trong _pending_pixmap
+        """
+        if self._pending_pixmap is not None and not self._pending_pixmap.isNull():
+            pixmap = self._pending_pixmap
+            # reset state
+            self._pending_pixmap = None
             self.preview_widget.hide()
             self.hide()
-
-            # Phát signal với ảnh đã chụp
-            self.screenshot_captured.emit(cropped_pixmap)
+            self.screenshot_captured.emit(pixmap)
         else:
+            # không có ảnh tạm -> như hủy
             self.cancel_selection()
 
     def cancel_selection(self):
+        # Hủy bỏ ảnh tạm nếu có
+        self._pending_pixmap = None
         self.preview_widget.hide()
         self.hide()
         self.cancelled.emit()
@@ -171,12 +191,13 @@ class ScreenshotOverlay(QWidget):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             self.cancel_selection()
-        elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+        elif event.key() in (Qt.Key_Return, Qt.Key_Enter):
             self.confirm_selection()
         else:
             super().keyPressEvent(event)
 
-    def pixmap_to_base64(pixmap):
+    @staticmethod
+    def pixmap_to_base64(pixmap: QPixmap) -> str:
         """Chuyển QPixmap sang base64 string"""
         byte_array = QByteArray()
         buffer = QBuffer(byte_array)

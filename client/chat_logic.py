@@ -106,6 +106,7 @@ class ChatLogic:
 
     def _buffer_thinking(self, thinking: str) -> None:
         if thinking and thinking.strip():
+            # Loại bỏ dòng trống và thêm xuống dòng nếu cần
             thinking = thinking.strip()
             if self.thinking_buffer and not self.thinking_buffer.endswith('\n'):
                 self.thinking_buffer += '\n'
@@ -127,10 +128,12 @@ class ChatLogic:
                     self.full_thinking_md, extensions=['fenced_code', 'tables', 'codehilite']
                 )
                 self.parent.ui.thinking_display.setHtml(f'<div style="padding: 10px;">{html_content}</div>')
+                # Cuộn tự động đến cuối
                 cursor = self.parent.ui.thinking_display.textCursor()
                 cursor.movePosition(QTextCursor.End)
                 self.parent.ui.thinking_display.setTextCursor(cursor)
                 self.parent.ui.thinking_display.ensureCursorVisible()
+                # Chỉ toggle nếu thinking_display chưa mở
                 if self.parent.ui.thinking_display.height() == 0:
                     self.parent.ui.toggle_thinking(show_full_content=False)
             else:
@@ -152,12 +155,14 @@ class ChatLogic:
 
         self.chunk_buffer = ""
         self.thinking_buffer = ""
+        # Chỉ tăng height vừa đủ để thấy toggle button (nếu có)
         self.parent.ui.adjust_window_height(staged=True)
 
     def on_search_started(self, query: str):
-        self.parent.spinner_logic.start_search()
+        """Xử lý khi bắt đầu tìm kiếm"""
+        self.parent.spinner_logic.start_search()  # Khởi tạo spinner trước
         if query and query.strip():
-            self.parent.spinner_logic.update_search_text(query.strip())
+            self.parent.spinner_logic.update_search_text(query.strip())  # Cập nhật text sau
 
     def on_search_sources(self, sources_json: str):
         try:
@@ -251,10 +256,12 @@ class ChatLogic:
         self.parent.ui.input_box.clear()
         self.parent.waiting_for_response = False
         self.parent.spinner_logic.reset_to_idle()
+        # Mở thinking widget hoàn toàn sau khi generation finished
         if self.parent.ui.thinking_widget.isVisible() and self.full_thinking_md.strip():
             self.parent.ui.toggle_thinking(show_full_content=True)
         else:
             self.parent.ui.thinking_widget.hide()
+        # Tăng height tối đa sau khi response hoàn tất
         self.parent.ui.adjust_window_height(staged=False)
         if self.ollama_thread:
             if self.ollama_thread.isRunning():

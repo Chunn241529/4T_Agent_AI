@@ -9,22 +9,10 @@ from app.services.session_manager import SessionManager
 from app.utils.logger import logger
 
 from ddgs import DDGS
-import aiohttp
+from app.utils.embed import embed_text  # Import hàm chung từ utils.embed
 
-OLLAMA_EMBED_MODEL = "nomic-embed-text"
 OLLAMA_SUMMARY_MODEL = "4T-S"
 OLLAMA_API_URL = "http://localhost:11434/api"
-
-async def embed_text(text: str) -> Optional[np.ndarray]:
-    try:
-        session = await SessionManager.get_session()
-        payload = {"model": OLLAMA_EMBED_MODEL, "input": text}
-        async with session.post(f"{OLLAMA_API_URL}/embed", json=payload) as resp:
-            data = await resp.json()
-            return np.array(data["embeddings"][0], dtype="float32")
-    except Exception as e:
-        logger.error(f"Lỗi embed: {e}")
-        return None
 
 async def summarize_text(text: str, query: str) -> str:
     try:
